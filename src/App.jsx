@@ -1245,7 +1245,10 @@ const ProductsPage = ()=>{
             </div>
             {p.description&&<div style={{fontSize:12,color:C.muted,lineHeight:1.4}}>{p.description}</div>}
             <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginTop:"auto"}}>
-              {[["Себестоимость",`${p.costPrice}₽`,C.text],["Цена",`${p.sellPrice}₽`,C.success],["Склад",`${p.stock} ${p.unit}`,p.stock<20?C.danger:C.text],["Маржа",`${((p.sellPrice-p.costPrice)/p.costPrice*100).toFixed(0)}%`,C.primary]].map(([l,v,c],i)=>(
+              {(isWorker
+                ? [["Склад",`${p.stock} ${p.unit}`,p.stock<20?C.danger:C.text],["Статус",p.status,C.primary]]
+                : [["Себестоимость",`${p.costPrice}₽`,C.text],["Цена",`${p.sellPrice}₽`,C.success],["Склад",`${p.stock} ${p.unit}`,p.stock<20?C.danger:C.text],["Маржа",`${((p.sellPrice-p.costPrice)/p.costPrice*100).toFixed(0)}%`,C.primary]]
+              ).map(([l,v,c],i)=>(
                 <div key={i} style={{background:C.bg,borderRadius:7,padding:"6px 8px"}}><div style={{fontSize:10,color:C.dim}}>{l}</div><div style={{fontSize:14,fontWeight:700,color:c}}>{v}</div></div>
               ))}
             </div>
@@ -2328,6 +2331,7 @@ const ClientsPage = ()=>{
   const [toast,setToast]=useState(null);
   const [errs,setErrs]=useState({});
   const [selectedClient,setSelectedClient]=useState(null);
+  const [historyOrder,setHistoryOrder]=useState(null);
   const [form,setForm]=useState({name:"",contact:"",phone:"",email:"",address:"",comment:""});
   const ap=products.filter(p=>!p.deleted);
   const [orderForm,setOrderForm]=useState({clientId:"",items:[{productId:ap[0]?.id||"",qty:""}],note:""});
@@ -2372,13 +2376,14 @@ const ClientsPage = ()=>{
     }
     const total=validItems.reduce((s,it)=>{const p=products.find(x=>x.id===+it.productId);return s+(p?p.sellPrice*+it.qty:0)},0);
     const now=new Date().toISOString();
-    setClientOrders(p=>[...p,{id:Date.now(),clientId:+orderForm.clientId,items:validItems.map(it=>({productId:+it.productId,qty:+it.qty})),orderDate:now,status:"новый",total,note:orderForm.note,priority:orderForm.priority||"нормальный",statusChangedAt:now,shippedAt:null,shippedBy:null}]);
+    setClientOrders(p=>[...p,{id:Date.now(),clientId:+orderForm.clientId,items:validItems.map(it=>({productId:+it.productId,qty:+it.qty})),orderDate:now,status:"новый",total,note:orderForm.note,priority:orderForm.priority||"нормальный",statusChangedAt:now,shippedAt:null,shippedBy:null,history:[{from:null,to:"новый",userId:currentUser.id,userName:currentUser.name,at:now}]}]);
     addLog(`Заказ: ${clients.find(c=>c.id===+orderForm.clientId)?.name} — ${total.toLocaleString("ru")} ₽`);
     setToast({message:"Заказ создан (товар зарезервирован)",type:"success"});setOrderModal(false);
   };
 
   const updateOrderStatus=(order,newStatus)=>{
-    setClientOrders(p=>p.map(o=>o.id===order.id?{...o,status:newStatus,statusChangedAt:new Date().toISOString()}:o));
+    const now=new Date().toISOString();
+    setClientOrders(p=>p.map(o=>o.id===order.id?{...o,status:newStatus,statusChangedAt:now,history:[...(o.history||[]),{from:o.status,to:newStatus,userId:currentUser.id,userName:currentUser.name,at:now}]}:o));
     setToast({message:"Статус обновлён",type:"success"});
   };
 
@@ -2402,7 +2407,7 @@ const ClientsPage = ()=>{
       const p=products.find(x=>x.id===it.productId);
       setInventoryMovements(prev=>[...prev,{id:Date.now()+Math.random(),productId:it.productId,type:"order_shipment",quantity:-it.qty,balance:(p?.stock||0)-it.qty,refId:`order-${order.id}`,createdAt:now}]);
     });
-    setClientOrders(prev=>prev.map(o=>o.id===order.id?{...o,status:"отгружен",shippedAt:now,shippedBy:currentUser.id}:o));
+    setClientOrders(prev=>prev.map(o=>o.id===order.id?{...o,status:"отгружен",shippedAt:now,shippedBy:currentUser.id,history:[...(o.history||[]),{from:o.status,to:"отгружен",userId:currentUser.id,userName:currentUser.name,at:now}]}:o));
     const cName=clients.find(c=>c.id===order.clientId)?.name;
     addLog(`Отгрузка заказа #${order.id} для ${cName}`);
     addNotification({title:`Заказ #${order.id} отгружен`,type:"информация",content:`Заказ для ${cName} отгружен`,targetAll:true});
@@ -2462,7 +2467,7 @@ const ClientsPage = ()=>{
       {tab==="orders"&&(
         <Card s={{padding:0,overflow:"hidden"}}><div style={{overflowX:"auto"}}>
           <table style={{width:"100%",borderCollapse:"collapse"}}>
-            <thead><tr><TH>#</TH><TH>Дата</TH><TH>Клиент</TH><TH>Товары</TH><TH>Сумма</TH><TH>Статус</TH><TH>Отгрузка</TH><TH></TH></tr></thead>
+            <thead><tr><TH>#</TH><TH>Дата</TH><TH>Клиент</TH><TH>Товары</TH><TH>Сумма</TH><TH>Статус</TH><TH>Отгрузка</TH><TH></TH><TH></TH></tr></thead>
             <tbody>{[...clientOrders].sort((a,b)=>new Date(b.orderDate)-new Date(a.orderDate)).map(o=>{
               const cl=clients.find(c=>c.id===o.clientId);
               const shipper=o.shippedBy?users.find(u=>u.id===o.shippedBy):null;
@@ -2486,6 +2491,9 @@ const ClientsPage = ()=>{
                   </TD>
                   <TD>
                     {(o.status==="готов")&&<Btn sz="sm" v="success" onClick={()=>shipOrder(o)} icon={<I.truck size={13}/>}>Отгрузить</Btn>}
+                  </TD>
+                  <TD>
+                    {(o.history||[]).length>0&&<button onClick={()=>setHistoryOrder(o)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,padding:"2px 6px",borderRadius:4,textDecoration:"underline",fontFamily:"inherit"}} title="История изменений">История</button>}
                   </TD>
                 </tr>
               );
@@ -2540,6 +2548,28 @@ const ClientsPage = ()=>{
         </div>
         <Txa label="Примечание" value={orderForm.note} onChange={e=>setOrderForm({...orderForm,note:e.target.value})}/>
         <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}><Btn v="secondary" onClick={()=>setOrderModal(false)}>Отмена</Btn><Btn onClick={saveOrder}>Создать заказ</Btn></div>
+      </Modal>
+
+      {/* Order history modal */}
+      <Modal open={!!historyOrder} onClose={()=>setHistoryOrder(null)} title={`История заказа #${historyOrder?.id}`} width={420}>
+        {historyOrder&&(
+          <div>
+            {(historyOrder.history||[]).length===0
+              ? <div style={{color:C.dim,fontSize:13,textAlign:"center",padding:"16px 0"}}>История не записана</div>
+              : (historyOrder.history||[]).map((h,i)=>(
+                <div key={i} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"8px 0",borderBottom:i<(historyOrder.history.length-1)?`1px solid ${C.border}`:"none"}}>
+                  <div style={{width:8,height:8,borderRadius:"50%",background:C.primary,marginTop:5,flexShrink:0}}/>
+                  <div>
+                    <div style={{fontSize:12,color:C.text}}>
+                      {h.from?<><span style={{color:C.dim}}>{h.from}</span>{" → "}<span style={{fontWeight:600}}>{h.to}</span></>:<span style={{fontWeight:600}}>Создан: {h.to}</span>}
+                    </div>
+                    <div style={{fontSize:11,color:C.dim,marginTop:2}}>{h.userName} · {h.at?new Date(h.at).toLocaleString("ru",{day:"2-digit",month:"2-digit",year:"2-digit",hour:"2-digit",minute:"2-digit"}):""}</div>
+                  </div>
+                </div>
+              ))
+            }
+          </div>
+        )}
       </Modal>
       {toast&&<Toast {...toast} onClose={()=>setToast(null)}/>}
     </div>
@@ -4367,7 +4397,7 @@ const CameraPage = () => {
           <Inp label="Название" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} error={errs.name}/>
           <Sel label="Зона" value={form.zone} onChange={e=>setForm({...form,zone:e.target.value})} options={CAMERA_ZONES.map(z=>({value:z,label:z}))}/>
           <Sel label="Тип источника" value={form.type} onChange={e=>setForm({...form,type:e.target.value,url:""})} options={CAMERA_SOURCE_TYPES.map(t=>({value:t,label:CAMERA_SOURCE_LABELS[t]}))}/>
-          {form.type==="image"&&<Inp label="Обновл. (сек)" value={form.refreshSec} onChange={e=>setForm({...form,refreshSec:+e.target.value})} style={{}} r={{type:"number",min:1,max:60}}/>}
+          {form.type==="image"&&<Inp label="Обновл. (сек)" value={form.refreshSec} onChange={e=>setForm({...form,refreshSec:+e.target.value})} type="number" min={1} max={60}/>}
         </div>
         {form.type==="rtsp"&&(
           <div style={{padding:"8px 12px",background:"rgba(232,168,56,0.08)",border:"1px solid rgba(232,168,56,0.25)",borderRadius:7,fontSize:11,color:"#E8A838",marginBottom:8}}>
@@ -4645,6 +4675,16 @@ export default function App(){
   const [sideOpen,setSideOpen]=useState(false);
   const [openGroups,setOpenGroups]=useState(()=>new Set(["main"]));
   const [hiddenWarnings,setHiddenWarnings]=useState(new Set());
+  const [isMobile,setIsMobile]=useState(()=>typeof window!=="undefined"&&window.innerWidth<=768);
+  const [serverOnline,setServerOnline]=useState(true);
+  useEffect(()=>{
+    const check=()=>{fetch("/api/ping",{cache:"no-store"}).then(()=>setServerOnline(true)).catch(()=>setServerOnline(false))};
+    check();const t=setInterval(check,15000);return()=>clearInterval(t);
+  },[]);
+  useEffect(()=>{
+    const h=()=>setIsMobile(window.innerWidth<=768);
+    window.addEventListener("resize",h);return()=>window.removeEventListener("resize",h);
+  },[]);
 
   const addLog=useCallback(msg=>{
     if(!currentUser) return;
@@ -4697,6 +4737,11 @@ export default function App(){
     @keyframes pulseBorder{0%,100%{box-shadow:0 0 0 1px rgba(232,80,80,0.3)}50%{box-shadow:0 0 0 3px rgba(232,80,80,0.6)}}
     @keyframes pulseGlow{0%,100%{opacity:1}50%{opacity:0.3}}
     option{background:${C.surface};color:${C.text}}
+    @media(max-width:640px){
+      main{padding:10px !important}
+      table{font-size:11px}
+      .hide-mobile{display:none !important}
+    }
   `;
 
   // Board mode: no login required — kitchen display screen
@@ -4810,8 +4855,9 @@ export default function App(){
       <style>{globalStyles}</style>
 
       {sideOpen&&<div onClick={()=>setSideOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:998}}/>}
+      {!serverOnline&&<div style={{position:"fixed",top:0,left:0,right:0,zIndex:1001,background:C.danger,color:"#fff",padding:"5px 16px",fontSize:12,fontWeight:600,textAlign:"center",letterSpacing:.3}}>Нет соединения с сервером — изменения не сохраняются</div>}
 
-      <aside style={{position:"fixed",top:0,left:0,bottom:0,width:220,background:C.surface,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",transition:"transform .3s",zIndex:999,transform:typeof window!=="undefined"&&window.innerWidth<=768&&!sideOpen?"translateX(-100%)":"translateX(0)"}}>
+      <aside style={{position:"fixed",top:0,left:0,bottom:0,width:220,background:C.surface,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",transition:"transform .3s",zIndex:999,transform:isMobile&&!sideOpen?"translateX(-100%)":"translateX(0)"}}>
         <div style={{padding:"16px 14px",borderBottom:`1px solid ${C.border}`}}>
           <div style={{display:"flex",alignItems:"center",gap:9}}>
             <div style={{width:34,height:34,borderRadius:9,background:`linear-gradient(135deg, ${C.primary}25, ${C.primary}10)`,display:"flex",alignItems:"center",justifyContent:"center",color:C.primary,border:`1px solid ${C.primary}30`}}>
@@ -4879,7 +4925,7 @@ export default function App(){
         </div>
       </aside>
 
-      <div style={{marginLeft:typeof window!=="undefined"&&window.innerWidth<=768?0:220,minHeight:"100vh"}}>
+      <div style={{marginLeft:isMobile?0:220,minHeight:"100vh"}}>
         <header style={{padding:"10px 18px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",gap:10,background:C.surface}}>
           <button onClick={()=>setSideOpen(!sideOpen)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",padding:3}}><I.menu size={20}/></button>
           {/* ── Budget indicator ── */}

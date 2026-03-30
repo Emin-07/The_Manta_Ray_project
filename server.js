@@ -68,7 +68,9 @@ app.post("/api/state/:key", (req, res) => {
 // ── API: get last update timestamps (for polling sync) ──
 app.get("/api/updates", (req, res) => {
   try {
-    const since = parseInt(req.query.since) || 0;
+    const sinceRaw = parseInt(req.query.since) || 0;
+    // JS Date.now() is ms; SQLite unixepoch() is seconds — normalize
+    const since = sinceRaw > 1e10 ? Math.floor(sinceRaw / 1000) : sinceRaw;
     const rows = db.prepare("SELECT key, MAX(updated_at) as ts FROM state WHERE updated_at > ? GROUP BY key").all(since);
     res.json(rows);
   } catch (e) {
