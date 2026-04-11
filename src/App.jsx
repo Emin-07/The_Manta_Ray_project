@@ -2,14 +2,24 @@ import { useState, useEffect, useCallback, useMemo, createContext, useContext, u
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell, LineChart, Line, Legend, AreaChart, Area } from "recharts";
 
 const AppContext = createContext();
-const hashPassword = (p) => btoa(p + "_hashed_salt_2024");
 
 const ROLES = [
-  { id: 1, name: "admin",    label: "Администратор"  },
-  { id: 2, name: "manager",  label: "Менеджер"       },
-  { id: 3, name: "worker",   label: "Сотрудник цеха" },
-  { id: 4, name: "owner",    label: "Владелец"       },
+  { id: 1, name: "admin",   label: "Директор"  },
+  { id: 2, name: "manager", label: "Менеджер"  },
+  { id: 3, name: "worker",  label: "Работник"  },
+  { id: 4, name: "owner",   label: "Владелец"  },
 ];
+const JOB_TITLES = ["лепщица","фасовщица","грузчик","курьер","торговый представитель","техничка","завхоз","менеджер цеха","другое"];
+const PAY_TYPES = ["сдельная","фиксированная","смешанная"];
+const STORE_STATUSES = ["active","blocked","blacklist"];
+const STORE_STATUS_LABELS = {active:"Активен",blocked:"Заблокирован",blacklist:"Чёрный список"};
+const ORDER_SOURCES = ["WhatsApp","телефон","вручную","другое"];
+const ATTENDANCE_TYPES = ["приход","уход","опоздание","отсутствие"];
+const ATTENDANCE_TYPE_COLORS = {приход:"success",уход:"info",опоздание:"orange",отсутствие:"danger"};
+const BATCH_STATUSES = ["активна","отгружена","списана","забрали сотрудники"];
+const DEFECT_REASONS = ["нарушение рецептуры","брак материала","производственная ошибка","брак упаковки","другое"];
+const PAYROLL_STATUSES = ["начислено","подтверждено к выплате","удержано","перенесено","причина подтверждена"];
+
 const CATEGORIES = ["Пельмени","Котлеты","Вареники","Блинчики","Манты","Хинкали","Чебуреки","Голубцы"];
 const UNITS = ["кг","шт","уп"];
 const STATUSES = ["в производстве","готов","снят с производства"];
@@ -17,7 +27,7 @@ const TASK_STATUSES = ["назначено","в работе","завершен�
 const RAW_CATEGORIES = ["Мясо","Тесто","Овощи","Специи","Масло","Молочные","Мука","Прочее"];
 const RAW_UNITS = ["кг","л","шт","г"];
 const NOTIF_TYPES = ["информация","предупреждение","ошибка"];
-const MARK_TYPES = ["присутствие","выполненный заказ"];
+const MARK_TYPES = ["приход","уход","опоздание","отсутствие"];
 
 const fmtDate = (d) => { if(!d) return "\u2014"; const dt=new Date(d); return dt.toLocaleDateString("ru-RU",{day:"2-digit",month:"2-digit",year:"numeric"})+" "+dt.toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"}); };
 const fmtShort = (d) => { if(!d) return "\u2014"; return new Date(d).toLocaleDateString("ru-RU",{day:"2-digit",month:"2-digit",year:"numeric"}); };
@@ -26,13 +36,18 @@ const daysBetween = (a,b) => Math.round((new Date(b)-new Date(a))/(1000*60*60*24
 const relTime = (d) => { const diff=Date.now()-new Date(d).getTime(); const m=Math.floor(diff/60000); if(m<1)return "только что"; if(m<60)return `${m} мин назад`; const h=Math.floor(m/60); if(h<24)return `${h}ч назад`; return fmtShort(d); };
 
 // ── Initial Data ──
+// roleId: 1=Директор, 2=Менеджер, 3=Работник, 4=Владелец
+// jobTitle — должность на производстве (отдельно от роли)
+// payType: сдельная/фиксированная/смешанная
+// dailyNorm — персональная дневная норма (кг/шт)
+// pieceRate — ставка за единицу (руб)
+// Passwords are stored server-side only. The client never sees or stores them.
+// These init records use the legacy btoa format; the server migrates to pbkdf2 on first login.
 const INIT_USERS = [
-  { id:1, name:"Иванов Иван Иванович", email:"admin@factory.ru", password:hashPassword("admin123"), roleId:1, status:"active", createdAt:"2024-01-15T10:00:00" },
-  { id:2, name:"Петрова Мария Сергеевна", email:"manager@factory.ru", password:hashPassword("manager123"), roleId:2, status:"active", createdAt:"2024-02-20T09:00:00" },
-  { id:3, name:"Сидоров Алексей Дмитриевич", email:"worker@factory.ru", password:hashPassword("worker123"), roleId:3, status:"active", createdAt:"2024-03-10T08:00:00" },
-  { id:4, name:"Козлова Анна Петровна", email:"worker2@factory.ru", password:hashPassword("worker123"), roleId:3, status:"active", createdAt:"2024-03-15T08:00:00" },
-  { id:5, name:"Морозов Дмитрий Олегович", email:"worker3@factory.ru", password:hashPassword("worker123"), roleId:3, status:"active", createdAt:"2024-04-01T08:00:00" },
-  { id:6, name:"Усманов Рустам Ахмедович", email:"owner@factory.ru",  password:hashPassword("owner123"),  roleId:4, status:"active", createdAt:"2024-01-01T08:00:00" },
+  { id:1, name:"Директор", email:"director@factory.ru", password:"ZGlyZWN0b3IxMjNfaGFzaGVkX3NhbHRfMjAyNA==", roleId:1, status:"active", jobTitle:"менеджер цеха", payType:"фиксированная", dailyNorm:0, pieceRate:0, fixedDayRate:0, comment:"", createdAt:"2024-01-01T08:00:00" },
+  { id:2, name:"Менеджер", email:"manager@factory.ru", password:"bWFuYWdlcjEyM19oYXNoZWRfc2FsdF8yMDI0", roleId:2, status:"active", jobTitle:"менеджер цеха", payType:"фиксированная", dailyNorm:0, pieceRate:0, fixedDayRate:0, comment:"", createdAt:"2024-01-01T08:00:00" },
+  { id:3, name:"Работник", email:"worker@factory.ru", password:"d29ya2VyMTIzX2hhc2hlZF9zYWx0XzIwMjQ=", roleId:3, status:"active", jobTitle:"лепщица", payType:"сдельная", dailyNorm:50, pieceRate:15, fixedDayRate:0, comment:"", createdAt:"2024-01-01T08:00:00" },
+  { id:4, name:"Владелец", email:"owner@factory.ru", password:"b3duZXIxMjNfaGFzaGVkX3NhbHRfMjAyNA==", roleId:4, status:"active", jobTitle:"другое", payType:"фиксированная", dailyNorm:0, pieceRate:0, fixedDayRate:0, comment:"", createdAt:"2024-01-01T08:00:00" },
 ];
 
 const INIT_PRODUCTS = [
@@ -65,72 +80,15 @@ const INIT_RECIPES = [
   { id:5, productId:5, items:[{rawId:4,qty:0.25,unit:"кг"},{rawId:5,qty:0.35,unit:"кг"},{rawId:8,qty:0.1,unit:"кг"},{rawId:10,qty:0.015,unit:"кг"},{rawId:11,qty:0.02,unit:"кг"}], createdAt:"2024-04-01T10:00:00", updatedAt:"2024-04-01T10:00:00" },
 ];
 
-const INIT_TASKS = [
-  { id:1, productId:1, userIds:[3], quantity:50, status:"завершено", createdAt:"2024-06-01T08:00:00", deadline:"2024-06-01T18:00:00", completedAt:"2024-06-01T16:30:00", note:"Утренняя партия" },
-  { id:2, productId:2, userIds:[4], quantity:100, status:"завершено", createdAt:"2024-06-01T08:00:00", deadline:"2024-06-01T18:00:00", completedAt:"2024-06-01T17:00:00", note:"" },
-  { id:3, productId:3, userIds:[5], quantity:75, status:"завершено", createdAt:"2024-06-02T08:00:00", deadline:"2024-06-02T18:00:00", completedAt:"2024-06-02T15:00:00", note:"" },
-  { id:4, productId:1, userIds:[3,4], quantity:60, status:"завершено", createdAt:"2024-06-03T08:00:00", deadline:"2024-06-03T18:00:00", completedAt:"2024-06-03T19:30:00", note:"Просрочено на 1.5ч" },
-  { id:5, productId:4, userIds:[4,5], quantity:120, status:"завершено", createdAt:"2024-06-04T08:00:00", deadline:"2024-06-05T18:00:00", completedAt:"2024-06-04T17:00:00", note:"" },
-  { id:6, productId:5, userIds:[3,4,5], quantity:40, status:"завершено", createdAt:"2024-06-05T08:00:00", deadline:"2024-06-05T18:00:00", completedAt:"2024-06-05T16:00:00", note:"" },
-  { id:7, productId:1, userIds:[3,5], quantity:80, status:"в работе", createdAt:"2024-06-10T08:00:00", deadline:"2024-06-10T20:00:00", completedAt:null, note:"Крупная партия" },
-  { id:8, productId:2, userIds:[4], quantity:60, status:"назначено", createdAt:"2024-06-12T08:00:00", deadline:"2024-06-13T18:00:00", completedAt:null, note:"" },
-  { id:9, productId:3, userIds:[3,5], quantity:90, status:"назначено", createdAt:"2024-06-12T08:00:00", deadline:"2024-06-14T18:00:00", completedAt:null, note:"" },
-];
-
-// task_employees: individual contribution tracking
-const INIT_TASK_EMPLOYEES = [
-  { id:1, taskId:1, employeeId:3, producedQty:50, status:"завершено", createdAt:"2024-06-01T08:00:00" },
-  { id:2, taskId:2, employeeId:4, producedQty:100, status:"завершено", createdAt:"2024-06-01T08:00:00" },
-  { id:3, taskId:3, employeeId:5, producedQty:75, status:"завершено", createdAt:"2024-06-02T08:00:00" },
-  { id:4, taskId:4, employeeId:3, producedQty:35, status:"завершено", createdAt:"2024-06-03T08:00:00" },
-  { id:5, taskId:4, employeeId:4, producedQty:25, status:"завершено", createdAt:"2024-06-03T08:00:00" },
-  { id:6, taskId:5, employeeId:4, producedQty:70, status:"завершено", createdAt:"2024-06-04T08:00:00" },
-  { id:7, taskId:5, employeeId:5, producedQty:50, status:"завершено", createdAt:"2024-06-04T08:00:00" },
-  { id:8, taskId:6, employeeId:3, producedQty:15, status:"завершено", createdAt:"2024-06-05T08:00:00" },
-  { id:9, taskId:6, employeeId:4, producedQty:15, status:"завершено", createdAt:"2024-06-05T08:00:00" },
-  { id:10, taskId:6, employeeId:5, producedQty:10, status:"завершено", createdAt:"2024-06-05T08:00:00" },
-  { id:11, taskId:7, employeeId:3, producedQty:0, status:"в работе", createdAt:"2024-06-10T08:00:00" },
-  { id:12, taskId:7, employeeId:5, producedQty:0, status:"в работе", createdAt:"2024-06-10T08:00:00" },
-  { id:13, taskId:8, employeeId:4, producedQty:0, status:"назначено", createdAt:"2024-06-12T08:00:00" },
-  { id:14, taskId:9, employeeId:3, producedQty:0, status:"назначено", createdAt:"2024-06-12T08:00:00" },
-  { id:15, taskId:9, employeeId:5, producedQty:0, status:"назначено", createdAt:"2024-06-12T08:00:00" },
-];
-
-// employee_history: daily activity log
-const INIT_EMPLOYEE_HISTORY = [
-  { id:1, employeeId:3, date:"2024-06-01", attendance:"present", tasksCompleted:1, producedQty:50, workStart:"09:00", workEnd:"16:30", comment:"Пришёл вовремя" },
-  { id:2, employeeId:4, date:"2024-06-01", attendance:"present", tasksCompleted:1, producedQty:100, workStart:"09:00", workEnd:"17:00", comment:"" },
-  { id:3, employeeId:5, date:"2024-06-01", attendance:"present", tasksCompleted:0, producedQty:0, workStart:"09:02", workEnd:"18:00", comment:"Опоздание 2 мин" },
-  { id:4, employeeId:3, date:"2024-06-02", attendance:"present", tasksCompleted:0, producedQty:0, workStart:"08:50", workEnd:"18:00", comment:"" },
-  { id:5, employeeId:4, date:"2024-06-02", attendance:"present", tasksCompleted:0, producedQty:0, workStart:"09:00", workEnd:"18:00", comment:"" },
-  { id:6, employeeId:5, date:"2024-06-02", attendance:"present", tasksCompleted:1, producedQty:75, workStart:"09:00", workEnd:"15:00", comment:"Отлично" },
-  { id:7, employeeId:3, date:"2024-06-03", attendance:"present", tasksCompleted:1, producedQty:35, workStart:"08:45", workEnd:"19:30", comment:"Задание просрочено" },
-  { id:8, employeeId:4, date:"2024-06-03", attendance:"present", tasksCompleted:1, producedQty:25, workStart:"09:00", workEnd:"19:30", comment:"" },
-  { id:9, employeeId:5, date:"2024-06-03", attendance:"absent", tasksCompleted:0, producedQty:0, workStart:"", workEnd:"", comment:"Больничный" },
-  { id:10, employeeId:4, date:"2024-06-04", attendance:"present", tasksCompleted:1, producedQty:70, workStart:"09:00", workEnd:"17:00", comment:"" },
-  { id:11, employeeId:5, date:"2024-06-04", attendance:"present", tasksCompleted:1, producedQty:50, workStart:"09:00", workEnd:"17:00", comment:"" },
-  { id:12, employeeId:3, date:"2024-06-05", attendance:"present", tasksCompleted:1, producedQty:15, workStart:"09:00", workEnd:"16:00", comment:"" },
-  { id:13, employeeId:4, date:"2024-06-05", attendance:"present", tasksCompleted:1, producedQty:15, workStart:"09:00", workEnd:"16:00", comment:"" },
-  { id:14, employeeId:5, date:"2024-06-05", attendance:"present", tasksCompleted:1, producedQty:10, workStart:"09:00", workEnd:"16:00", comment:"" },
-];
-
-// production_plans
-const INIT_PRODUCTION_PLANS = [
-  { id:1, productId:1, plannedQty:200, completedQty:120, productionDate:"2024-06-10", employeeIds:[3,4], createdBy:1, createdAt:"2024-06-08T10:00:00", status:"в процессе" },
-  { id:2, productId:2, plannedQty:150, completedQty:150, productionDate:"2024-06-11", employeeIds:[4,5], createdBy:2, createdAt:"2024-06-09T09:00:00", status:"выполнен" },
-  { id:3, productId:3, plannedQty:100, completedQty:0, productionDate:"2024-06-12", employeeIds:[3,5], createdBy:2, createdAt:"2024-06-10T08:00:00", status:"запланирован" },
-  { id:4, productId:5, plannedQty:80, completedQty:40, productionDate:"2024-06-12", employeeIds:[3,4,5], createdBy:1, createdAt:"2024-06-10T08:30:00", status:"в процессе" },
-  { id:5, productId:1, plannedQty:300, completedQty:0, productionDate:"2024-06-15", employeeIds:[3,4], createdBy:2, createdAt:"2024-06-12T09:00:00", status:"запланирован" },
-  { id:6, productId:4, plannedQty:200, completedQty:0, productionDate:"2024-06-16", employeeIds:[4,5], createdBy:2, createdAt:"2024-06-12T09:30:00", status:"запланирован" },
-];
+const INIT_TASKS = [];
+const INIT_TASK_EMPLOYEES = [];
+const INIT_EMPLOYEE_HISTORY = [];
+const INIT_PRODUCTION_PLANS = [];
 const PLAN_STATUSES = ["запланирован","в процессе","выполнен","отменён"];
 
-// Clients
-const INIT_CLIENTS = [
-  { id:1, name:'Магазин "Халяль"', contact:"Ахмед Магомедов", phone:"+7(928)100-20-30", email:"halal@shop.ru", address:"ул. Ленина 15", comment:"Постоянный клиент", createdAt:"2024-02-01T10:00:00" },
-  { id:2, name:'Кафе "Домашнее"', contact:"Марина Иванова", phone:"+7(928)200-30-40", email:"home@cafe.ru", address:"пр. Мира 42", comment:"Заказ каждую неделю", createdAt:"2024-03-10T09:00:00" },
-  { id:3, name:'Супермаркет "Свежесть"', contact:"Олег Петров", phone:"+7(928)300-40-50", email:"fresh@market.ru", address:"ул. Победы 8", comment:"Крупные партии", createdAt:"2024-04-15T11:00:00" },
-];
+// Магазины (бывшие "клиенты")
+// status: active/blocked/blacklist, whatsapp, blockReason
+const INIT_CLIENTS = [];
 const ORDER_STATUSES = ["новый","сборка","в производстве","готов","отгружен","отменён"];
 const ORDER_PRIORITIES = ["нормальный","важный","срочный"];
 const BOARD_COLUMNS = [
@@ -139,85 +97,31 @@ const BOARD_COLUMNS = [
   {id:"в производстве", label:"В производстве"},
   {id:"готов",          label:"Готово ✓"},
 ];
-const INIT_CLIENT_ORDERS = [
-  { id:1, clientId:1, items:[{productId:1,qty:100},{productId:2,qty:50}], orderDate:"2024-06-01T10:00:00", status:"отгружен", total:67000, note:"", priority:"нормальный", statusChangedAt:"2024-06-02T14:00:00", shippedAt:"2024-06-02T14:00:00", shippedBy:2 },
-  { id:2, clientId:2, items:[{productId:3,qty:50},{productId:4,qty:80}], orderDate:"2024-06-05T09:00:00", status:"отгружен", total:49500, note:"Срочный заказ", priority:"срочный", statusChangedAt:"2024-06-06T10:00:00", shippedAt:"2024-06-06T10:00:00", shippedBy:2 },
-  { id:3, clientId:1, items:[{productId:1,qty:200},{productId:5,qty:40}], orderDate:"2024-06-10T10:00:00", status:"в производстве", total:112000, note:"", priority:"важный", statusChangedAt:"2024-06-10T11:00:00", shippedAt:null, shippedBy:null },
-  { id:4, clientId:3, items:[{productId:1,qty:300},{productId:2,qty:100},{productId:3,qty:150}], orderDate:"2024-06-12T08:00:00", status:"новый", total:239500, note:"Большой заказ", priority:"нормальный", statusChangedAt:"2024-06-12T08:00:00", shippedAt:null, shippedBy:null },
-];
+const INIT_CLIENT_ORDERS = [];
 
-// Sales (quick sales)
-const INIT_SALES = [
-  { id:1, productId:1, quantity:50, clientId:1, soldBy:2, createdAt:"2024-06-03T11:00:00" },
-  { id:2, productId:2, quantity:30, clientId:null, soldBy:2, createdAt:"2024-06-04T15:00:00" },
-  { id:3, productId:3, quantity:20, clientId:2, soldBy:2, createdAt:"2024-06-06T12:00:00" },
-];
+const INIT_SALES = [];
 
 // Inventory movements journal
 const MOVEMENT_TYPES = {production:"Производство",output:"Выпуск (ручной)",sale:"Продажа",order_shipment:"Отгрузка заказа",manual_adjustment:"Коррекция"};
-const INIT_INVENTORY_MOVEMENTS = [
-  { id:1, productId:1, type:"production", quantity:50, balance:200, refId:"task-1", createdAt:"2024-06-01T16:30:00" },
-  { id:2, productId:2, type:"production", quantity:100, balance:180, refId:"task-2", createdAt:"2024-06-01T17:00:00" },
-  { id:3, productId:1, type:"order_shipment", quantity:-100, balance:100, refId:"order-1", createdAt:"2024-06-02T14:00:00" },
-  { id:4, productId:1, type:"sale", quantity:-50, balance:50, refId:"sale-1", createdAt:"2024-06-03T11:00:00" },
-  { id:5, productId:3, type:"order_shipment", quantity:-50, balance:150, refId:"order-2", createdAt:"2024-06-06T10:00:00" },
-];
+const INIT_INVENTORY_MOVEMENTS = [];
+const INIT_SUPPLIERS = [];
+const INIT_DELIVERIES = [];
+const INIT_RAW_MOVEMENTS = [];
+const INIT_NOTIFICATIONS = [];
+// Посещаемость: { id, employeeId, type (приход/уход/опоздание/отсутствие), time (ISO), confirmedBy, reason, comment, createdAt }
+const INIT_MARKS = [];
 
-const INIT_SUPPLIERS = [
-  { id:1, name:"МясоТорг", contact:"+7(495)123-45-67", email:"info@myasotorg.ru" },
-  { id:2, name:"ТестоПром", contact:"+7(495)234-56-78", email:"sales@testoprom.ru" },
-  { id:3, name:"АгроФерма", contact:"+7(495)345-67-89", email:"zakaz@agro.ru" },
-  { id:4, name:"СпецМикс", contact:"+7(495)456-78-90", email:"opt@specmix.ru" },
-];
-
-const INIT_DELIVERIES = [
-  { id:1, supplierId:1, rawId:1, quantity:200, pricePerUnit:630, totalPrice:126000, date:"2024-06-01T10:00:00", userId:2 },
-  { id:2, supplierId:1, rawId:2, quantity:150, pricePerUnit:530, totalPrice:79500, date:"2024-06-01T10:00:00", userId:2 },
-  { id:3, supplierId:2, rawId:5, quantity:300, pricePerUnit:110, totalPrice:33000, date:"2024-06-02T09:00:00", userId:2 },
-  { id:4, supplierId:3, rawId:7, quantity:500, pricePerUnit:40, totalPrice:20000, date:"2024-06-03T11:00:00", userId:2 },
-  { id:5, supplierId:3, rawId:8, quantity:200, pricePerUnit:30, totalPrice:6000, date:"2024-06-03T11:00:00", userId:2 },
-  { id:6, supplierId:4, rawId:10, quantity:20, pricePerUnit:1100, totalPrice:22000, date:"2024-06-05T14:00:00", userId:2 },
-  { id:7, supplierId:1, rawId:3, quantity:100, pricePerUnit:360, totalPrice:36000, date:"2024-06-07T10:00:00", userId:2 },
-];
-
-const INIT_RAW_MOVEMENTS = [
-  { id:1, rawId:1, type:"in", quantity:200, reason:"Поставка #1", date:"2024-06-01T10:00:00" },
-  { id:2, rawId:2, type:"in", quantity:150, reason:"Поставка #2", date:"2024-06-01T10:00:00" },
-  { id:3, rawId:1, type:"out", quantity:15, reason:"Задание #1: Пельмени 50кг", date:"2024-06-01T16:30:00" },
-  { id:4, rawId:5, type:"in", quantity:300, reason:"Поставка #3", date:"2024-06-02T09:00:00" },
-  { id:5, rawId:7, type:"in", quantity:500, reason:"Поставка #4", date:"2024-06-03T11:00:00" },
-];
-
-const INIT_NOTIFICATIONS = [
-  { id:1, title:"Система запущена", type:"информация", content:"Система управления производством успешно запущена.", createdBy:1, createdAt:"2024-06-01T08:00:00", readBy:[1], targetAll:true, targetUsers:[] },
-  { id:2, title:"Низкий остаток: Специи (микс)", type:"предупреждение", content:"Остаток специй приближается к минимальному уровню. Текущий запас: 50 кг при минимуме 10 кг.", createdBy:0, createdAt:"2024-06-03T09:00:00", readBy:[], targetAll:true, targetUsers:[] },
-  { id:3, title:"Задание #1 выполнено", type:"информация", content:"Сидоров А.Д. завершил задание: Пельмени Домашние x50 кг.", createdBy:0, createdAt:"2024-06-01T16:30:00", readBy:[1,2], targetAll:true, targetUsers:[] },
-  { id:4, title:"Задание #4 просрочено", type:"ошибка", content:"Сидоров А.Д. просрочил задание #4: Пельмени Домашние x60 кг на 1.5 часа.", createdBy:0, createdAt:"2024-06-03T19:30:00", readBy:[1], targetAll:true, targetUsers:[] },
-  { id:5, title:"Новая поставка от МясоТорг", type:"информация", content:"Получена поставка: Говядина 200 кг, Телятина 150 кг.", createdBy:0, createdAt:"2024-06-01T10:00:00", readBy:[1,2], targetAll:true, targetUsers:[] },
-  { id:6, title:"Пропущена отметка присутствия", type:"предупреждение", content:"Козлова А.П. не отметилась на смене 2024-06-05.", createdBy:0, createdAt:"2024-06-05T10:00:00", readBy:[], targetAll:false, targetUsers:[1,2,4] },
-  { id:7, title:"Обновление системы", type:"информация", content:"Добавлены модули: управление поставками, KPI сотрудников, рецептуры.", createdBy:1, createdAt:"2024-06-10T08:00:00", readBy:[1], targetAll:true, targetUsers:[] },
-];
-
-const INIT_MARKS = [
-  { id:1, employeeId:3, markType:"присутствие", relatedTaskId:null, createdBy:2, createdAt:"2024-06-01T07:55:00", comment:"Пришёл вовремя" },
-  { id:2, employeeId:4, markType:"присутствие", relatedTaskId:null, createdBy:2, createdAt:"2024-06-01T07:58:00", comment:"" },
-  { id:3, employeeId:5, markType:"присутствие", relatedTaskId:null, createdBy:2, createdAt:"2024-06-01T08:02:00", comment:"Опоздание 2 мин" },
-  { id:4, employeeId:3, markType:"выполненный заказ", relatedTaskId:1, createdBy:2, createdAt:"2024-06-01T16:30:00", comment:"Выполнено качественно" },
-  { id:5, employeeId:4, markType:"выполненный заказ", relatedTaskId:2, createdBy:2, createdAt:"2024-06-01T17:00:00", comment:"" },
-  { id:6, employeeId:3, markType:"присутствие", relatedTaskId:null, createdBy:2, createdAt:"2024-06-02T07:50:00", comment:"" },
-  { id:7, employeeId:4, markType:"присутствие", relatedTaskId:null, createdBy:2, createdAt:"2024-06-02T08:00:00", comment:"" },
-  { id:8, employeeId:5, markType:"выполненный заказ", relatedTaskId:3, createdBy:2, createdAt:"2024-06-02T15:00:00", comment:"Отлично" },
-  { id:9, employeeId:3, markType:"присутствие", relatedTaskId:null, createdBy:2, createdAt:"2024-06-03T07:45:00", comment:"" },
-  { id:10, employeeId:3, markType:"выполненный заказ", relatedTaskId:4, createdBy:1, createdAt:"2024-06-03T19:30:00", comment:"Задание просрочено на 1.5ч" },
-];
-
-// ── Production Outputs initial data ──
 const INIT_PRODUCTION_OUTPUTS = [];
 
-// Debts: { id, userId, amount, remaining, description, date, dueDate, status, comment, payments, createdAt }
-// status: "активен" | "частично погашен" | "погашен"
+// Долги магазинов: { id, storeId, amount, remaining, description, date, dueDate, status, comment, payments[], createdAt }
 const INIT_DEBTS = [];
 const DEBT_STATUSES = ["активен","частично погашен","погашен"];
+
+// Партии готовой продукции: { id, productId, quantity, producedAt, expiresAt, createdBy, status, note }
+const INIT_BATCHES = [];
+
+// Брак/списания: { id, employeeId, productId, batchId, quantity, reason, confirmedBy, affectsSalary, affectsStock, note, createdAt }
+const INIT_DEFECTS = [];
 
 // ── Cameras ──
 // Supported browser-native types (no backend required):
@@ -272,6 +176,23 @@ function useLocalStorage(key, init) {
 // ── usePersisted: API-backed state with polling sync between users ──
 const POLL_INTERVAL = 6000; // ms between sync checks
 
+// Global 401 handler: signals App to force logout
+let _onUnauthorized = null;
+export function setUnauthorizedHandler(fn) { _onUnauthorized = fn; }
+
+// Global write-error handler: called when a usePersisted save fails with
+// a non-ok HTTP status (403/404/500/etc) or a network error. Used to
+// surface a user-visible toast instead of letting the optimistic update
+// silently revert on the next poll.
+let _onWriteError = null;
+export function setWriteErrorHandler(fn) { _onWriteError = fn; }
+
+async function apiFetch(url, options) {
+  const r = await fetch(url, options);
+  if (r.status === 401) { _onUnauthorized?.(); return null; }
+  return r;
+}
+
 function usePersisted(key, init) {
   const initVal = typeof init === "function" ? init() : init;
   const [val, setValRaw] = useState(initVal);
@@ -279,8 +200,8 @@ function usePersisted(key, init) {
 
   // On mount: load from server
   useEffect(() => {
-    fetch(`/api/state/${key}`)
-      .then(r => r.ok ? r.json() : null)
+    apiFetch(`/api/state/${key}`)
+      .then(r => r && r.ok ? r.json() : null)
       .then(data => {
         if (data !== null) {
           lastSaved.current = JSON.stringify(data);
@@ -293,8 +214,8 @@ function usePersisted(key, init) {
   // Polling: sync from server every POLL_INTERVAL ms
   useEffect(() => {
     const id = setInterval(() => {
-      fetch(`/api/state/${key}`)
-        .then(r => r.ok ? r.json() : null)
+      apiFetch(`/api/state/${key}`)
+        .then(r => r && r.ok ? r.json() : null)
         .then(data => {
           if (data !== null) {
             const serialized = JSON.stringify(data);
@@ -314,16 +235,44 @@ function usePersisted(key, init) {
       const next = typeof updater === "function" ? updater(prev) : updater;
       const serialized = JSON.stringify(next);
       lastSaved.current = serialized;
-      fetch(`/api/state/${key}`, {
+      apiFetch(`/api/state/${key}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: serialized,
-      }).catch(() => {});
+      })
+        .then(r => {
+          // r === null means 401 (handled by _onUnauthorized → logout).
+          // r.ok === true means save succeeded.
+          // Otherwise (403/404/409/500/…): reset lastSaved so the next poll
+          // can pull the authoritative server state back into the UI, and
+          // notify the app so it can show a toast. This prevents the
+          // previous silent rollback where the user thought their change
+          // was saved.
+          if (r && !r.ok) {
+            lastSaved.current = null;
+            _onWriteError?.({ key, status: r.status });
+          }
+        })
+        .catch(() => {
+          lastSaved.current = null;
+          _onWriteError?.({ key, status: 0 });
+        });
       return next;
     });
   }, [key]); // eslint-disable-line
 
-  return [val, setVal];
+  // setLocal: updates React state WITHOUT a server POST.
+  // Use after an action endpoint already wrote the correct server state,
+  // so the client reflects it immediately without triggering a 403 write.
+  const setLocal = useCallback((updater) => {
+    setValRaw(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      lastSaved.current = JSON.stringify(next); // prevents next poll from overwriting
+      return next;
+    });
+  }, []); // eslint-disable-line
+
+  return [val, setVal, setLocal];
 }
 
 // ── Icons ──
@@ -510,16 +459,20 @@ const SearchBox = ({value,onChange,ph="Поиск..."})=>(
 // LOGIN
 // ═══════════════════════════════════════════════════════════════
 const LoginPage = ({onLogin})=>{
-  const [email,setEmail]=useState("admin@factory.ru");
-  const [pw,setPw]=useState("admin123");
+  const [email,setEmail]=useState("director@factory.ru");
+  const [pw,setPw]=useState("director123");
   const [err,setErr]=useState("");
-  const {users}=useContext(AppContext);
-  const go=()=>{
-    const u=users.find(x=>x.email===email);
-    if(!u) return setErr("Пользователь не найден");
-    if(u.password!==hashPassword(pw)) return setErr("Неверный пароль");
-    if(u.status==="blocked") return setErr("Аккаунт заблокирован");
-    setErr(""); onLogin(u);
+  const [loading,setLoading]=useState(false);
+  const go=async()=>{
+    if(loading) return;
+    setLoading(true);setErr("");
+    try{
+      const r=await fetch("/api/auth/login",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({email,password:pw})});
+      const data=await r.json();
+      if(!r.ok){setErr(data.error||"Ошибка входа");return;}
+      onLogin(data);
+    }catch{setErr("Сервер недоступен");}
+    finally{setLoading(false);}
   };
   return(
     <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:`radial-gradient(ellipse at 30% 20%, #2A2218 0%, ${C.bg} 70%)`,padding:20}}>
@@ -539,12 +492,9 @@ const LoginPage = ({onLogin})=>{
             <div style={{marginTop:10}}><EthnicBorder color={C.primary} height={2}/></div>
           </div>
           {err&&<div style={{background:C.dangerBg,border:`1px solid rgba(196,78,61,.25)`,borderRadius:7,padding:"8px 12px",marginBottom:14,display:"flex",alignItems:"center",gap:7,color:C.danger,fontSize:12}}><I.alert size={15}/>{err}</div>}
-          <Inp label="Email" type="email" value={email} onChange={e=>setEmail(e.target.value)}/>
-          <Inp label="Пароль" type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()}/>
-          <Btn onClick={go} style={{width:"100%",justifyContent:"center",padding:11,marginTop:4}} sz="lg">Войти</Btn>
-          <div style={{marginTop:18,padding:12,background:C.bg,borderRadius:7,fontSize:11,color:C.dim,lineHeight:1.6,border:`1px solid ${C.border}`}}>
-            <strong style={{color:C.muted}}>Демо:</strong><br/>admin@factory.ru / admin123<br/>manager@factory.ru / manager123<br/>worker@factory.ru / worker123<br/>owner@factory.ru / owner123
-          </div>
+          <Inp label="Email" type="email" value={email} onChange={e=>setEmail(e.target.value)} disabled={loading}/>
+          <Inp label="Пароль" type="password" value={pw} onChange={e=>setPw(e.target.value)} onKeyDown={e=>e.key==="Enter"&&go()} disabled={loading}/>
+          <Btn onClick={go} style={{width:"100%",justifyContent:"center",padding:11,marginTop:4}} sz="lg" disabled={loading}>{loading?"Вход...":"Войти"}</Btn>
         </div>
       </div>
     </div>
@@ -555,7 +505,7 @@ const LoginPage = ({onLogin})=>{
 // NOTIFICATION BELL (Header Dropdown)
 // ═══════════════════════════════════════════════════════════════
 const NotificationBell = ({onGoToPage})=>{
-  const {notifications,setNotifications,currentUser,users}=useContext(AppContext);
+  const {notifications,setNotifsL,currentUser,users}=useContext(AppContext);
   const [open,setOpen]=useState(false);
   const ref=useRef(null);
 
@@ -567,16 +517,28 @@ const NotificationBell = ({onGoToPage})=>{
 
   const unread=visible.filter(n=>!n.readBy?.includes(currentUser.id)).length;
 
-  const markRead=(id)=>{
-    setNotifications(p=>p.map(n=>n.id===id?{...n,readBy:[...(n.readBy||[]).filter(x=>x!==currentUser.id),currentUser.id]}:n));
+  // markRead / markAllRead go through dedicated action endpoints so workers
+  // (who have no write access to dk_notifications) can still mark their own
+  // readBy entries. Server returns the updated list; we apply it locally via
+  // setNotifsL to avoid a redundant POST to /api/state/dk_notifications.
+  const markRead=async(id)=>{
+    try{
+      const r=await fetch("/api/actions/notifications/read",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({notificationId:id}),
+      });
+      if(!r.ok) return;
+      const data=await r.json();
+      if(data?.dk_notifications) setNotifsL(data.dk_notifications);
+    }catch{}
   };
-  const markAllRead=()=>{
-    setNotifications(p=>p.map(n=>{
-      if((n.targetAll||n.targetUsers?.includes(currentUser.id))&&!n.readBy?.includes(currentUser.id)){
-        return {...n,readBy:[...(n.readBy||[]),currentUser.id]};
-      }
-      return n;
-    }));
+  const markAllRead=async()=>{
+    try{
+      const r=await fetch("/api/actions/notifications/read-all",{method:"POST"});
+      if(!r.ok) return;
+      const data=await r.json();
+      if(data?.dk_notifications) setNotifsL(data.dk_notifications);
+    }catch{}
   };
 
   const nColor=t=>t==="ошибка"?C.danger:t==="предупреждение"?C.primary:C.info;
@@ -628,7 +590,7 @@ const NotificationBell = ({onGoToPage})=>{
 // DASHBOARD
 // ═══════════════════════════════════════════════════════════════
 const DashboardPage = ()=>{
-  const {products,users,currentUser,tasks,rawMaterials,deliveries,notifications,marks,taskEmployees,recipes,clientOrders,sales,productionPlans,setPage,hiddenWarnings,setHiddenWarnings,productionOutputs}=useContext(AppContext);
+  const {products,users,currentUser,tasks,rawMaterials,deliveries,notifications,marks,setMarks,taskEmployees,recipes,clientOrders,clients,sales,productionPlans,setPage,hiddenWarnings,setHiddenWarnings,productionOutputs,addLog,batches,debts,defects,applyServerState}=useContext(AppContext);
   const ap=products.filter(p=>!p.deleted);
   const role=ROLES.find(r=>r.id===currentUser.roleId);
   const canSeeFinance=role?.name!=="worker";
@@ -667,8 +629,8 @@ const DashboardPage = ()=>{
   // Overdue tasks
   const overdueTasks=tasks.filter(t=>!t.completedAt&&new Date()>new Date(t.deadline)&&t.status!=="завершено"&&t.status!=="просрочено");
 
-  // Absent workers today
-  const todayPresence=marks.filter(m=>m.markType==="присутствие"&&m.createdAt.startsWith(todayStr)).map(m=>m.employeeId);
+  // Absent workers today — unified: new model type:"приход", legacy markType:"присутствие"
+  const todayPresence=marks.filter(m=>(m.type==="приход"||m.markType==="присутствие")&&(m.time||m.createdAt||"").startsWith(todayStr)).map(m=>m.employeeId);
   const absentWorkers=allWorkers.filter(w=>!todayPresence.includes(w.id));
 
   // Forecasts
@@ -749,12 +711,213 @@ const DashboardPage = ()=>{
     return{totalIncome,totalExpense,balance,monthIncome,mExpense,monthProfit,pendingOrdersValue};
   },[sales,clientOrders,deliveries,products]);
 
+  // Attendance check — unified model
+  const attendanceMarked=marks.some(m=>m.employeeId===currentUser.id&&(m.type==="приход"||m.markType==="присутствие")&&(m.time||m.createdAt||"").startsWith(todayStr));
+  // My active tasks (for worker view)
+  const myActiveTasks=tasks.filter(t=>(t.userIds||[]).includes(currentUser.id)&&(t.status==="назначено"||t.status==="в работе")).sort((a,b)=>new Date(a.deadline)-new Date(b.deadline));
+  const myTodayProduced=(productionOutputs||[]).filter(o=>o.employeeId===currentUser.id&&o.date.startsWith(todayStr)).reduce((s,o)=>s+o.quantity,0);
+
+  // Worker-specific view
+  if(isWorker){
+    return(
+      <div>
+        <div style={{marginBottom:16}}>
+          <h1 style={{margin:0,fontSize:20,fontWeight:800,color:C.text}}>{currentUser.name.split(" ")[1]||currentUser.name}</h1>
+          <p style={{margin:"2px 0 0",color:C.dim,fontSize:12}}>{fmtShort(new Date().toISOString())}</p>
+        </div>
+        {!attendanceMarked&&(
+          <div style={{marginBottom:14,padding:"12px 16px",borderRadius:10,background:`${C.orange}18`,border:`1px solid ${C.orange}50`,display:"flex",alignItems:"center",gap:10}}>
+            <I.alert size={16} style={{color:C.orange,flexShrink:0}}/>
+            <span style={{fontSize:13,color:C.orange,fontWeight:600,flex:1}}>Вы не отметили присутствие сегодня</span>
+            <button onClick={async()=>{
+              try{
+                const r=await fetch("/api/actions/attendance-mark",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({employeeId:currentUser.id,type:"приход"})});
+                if(r.ok){const data=await r.json();if(data.state)applyServerState(data.state);}
+              }catch(e){}
+            }} style={{padding:"5px 12px",borderRadius:6,border:`1px solid ${C.orange}50`,background:`${C.orange}20`,color:C.orange,fontSize:12,fontWeight:700,cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}}>Отметиться</button>
+          </div>
+        )}
+        <div style={{display:"flex",flexWrap:"wrap",gap:10,marginBottom:16}}>
+          <Stat icon={<I.tasks size={18}/>} label="Активных заданий" value={myActiveTasks.length} color={myActiveTasks.length>0?C.primary:C.dim}/>
+          <Stat icon={<I.factory size={18}/>} label="Произведено сегодня" value={`${myTodayProduced} ед.`} color={myTodayProduced>0?C.success:C.dim}/>
+        </div>
+        <Card s={{marginBottom:14}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+            <Title>Мои задания</Title>
+            <button onClick={()=>setPage("tasks")} style={{fontSize:11,color:C.primary,background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",textDecoration:"underline"}}>все →</button>
+          </div>
+          {myActiveTasks.length===0&&<div style={{textAlign:"center",padding:"20px 0",color:C.dim,fontSize:13}}>Нет активных заданий</div>}
+          {myActiveTasks.map(t=>{
+            const prod=products.find(p=>p.id===t.productId);
+            const now=Date.now();const dl=new Date(t.deadline).getTime();
+            const msLeft=dl-now;const hoursLeft=Math.floor(msLeft/3600000);
+            const isOverdue=msLeft<0;const isUrgent=msLeft>0&&msLeft<7200000;
+            const dlColor=isOverdue?C.danger:isUrgent?C.orange:msLeft<86400000?C.primary:C.dim;
+            const dlLabel=isOverdue?"просрочено":hoursLeft<1?"< 1 ч":hoursLeft<24?`${hoursLeft} ч`:fmtShort(t.deadline);
+            return(
+              <div key={t.id} style={{display:"flex",alignItems:"center",gap:12,padding:"10px 0",borderBottom:`1px solid ${C.border}`}}>
+                <div style={{width:4,height:40,borderRadius:2,background:t.status==="в работе"?C.info:C.primary,flexShrink:0}}/>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{prod?.name||"—"} <span style={{fontWeight:400,color:C.muted}}>×{t.quantity}</span></div>
+                  <div style={{fontSize:11,color:dlColor,marginTop:2,display:"flex",alignItems:"center",gap:4}}><I.clock size={10}/>{dlLabel}</div>
+                </div>
+                <Badge color={t.status==="в работе"?"info":"primary"} s={{fontSize:11}}>{t.status}</Badge>
+                <button onClick={()=>setPage("tasks")} style={{padding:"5px 10px",borderRadius:6,border:`1px solid ${C.border}`,background:C.surface2,color:C.muted,fontSize:11,cursor:"pointer",fontFamily:"inherit"}}>→</button>
+              </div>
+            );
+          })}
+        </Card>
+        <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+          <button onClick={()=>setPage("tasks")} style={{display:"flex",alignItems:"center",gap:6,padding:"10px 16px",borderRadius:8,border:`1px solid ${C.primary}30`,background:`${C.primary}10`,color:C.primary,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}><I.tasks size={14}/>Задания</button>
+          <button onClick={()=>setPage("prodOutput")} style={{display:"flex",alignItems:"center",gap:6,padding:"10px 16px",borderRadius:8,border:`1px solid ${C.success}30`,background:`${C.success}10`,color:C.success,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}><I.factory size={14}/>Зафиксировать выпуск</button>
+          <button onClick={()=>setPage("workerHistory")} style={{display:"flex",alignItems:"center",gap:6,padding:"10px 16px",borderRadius:8,border:`1px solid ${C.info}30`,background:`${C.info}10`,color:C.info,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}><I.clock size={14}/>Моя история</button>
+        </div>
+      </div>
+    );
+  }
+
   return(
     <div>
-      <div style={{marginBottom:20}}>
-        <h1 style={{margin:0,fontSize:23,fontWeight:800,color:C.text}}>Добро пожаловать, {currentUser.name.split(" ")[1]||currentUser.name}</h1>
-        <p style={{margin:"3px 0 0",color:C.muted,fontSize:13}}>{role?.label} · {fmtShort(new Date().toISOString())}</p>
+      <div style={{marginBottom:16,display:"flex",alignItems:"center",justifyContent:"space-between",flexWrap:"wrap",gap:8}}>
+        <div>
+          <h1 style={{margin:0,fontSize:20,fontWeight:800,color:C.text}}>{currentUser.name.split(" ")[1]||currentUser.name}</h1>
+          <p style={{margin:"2px 0 0",color:C.dim,fontSize:12}}>{role?.label} · {fmtShort(new Date().toISOString())}</p>
+        </div>
       </div>
+
+      {/* ═══ SHIFT SNAPSHOT — micromanagement block ═══ */}
+      {(isAdmin||isManager)&&(()=>{
+        const now=new Date();
+        const todayStr2=now.toISOString().slice(0,10);
+        // Who arrived today
+        const arrivedIds=new Set(marks.filter(m=>(m.type==="приход"||m.markType==="присутствие")&&(m.time||m.createdAt||"").startsWith(todayStr2)).map(m=>m.employeeId));
+        // Who departed today
+        const departedIds=new Set(marks.filter(m=>m.type==="уход"&&(m.time||m.createdAt||"").startsWith(todayStr2)).map(m=>m.employeeId));
+        // Who was late
+        const lateIds=new Set(marks.filter(m=>m.type==="опоздание"&&(m.time||m.createdAt||"").startsWith(todayStr2)).map(m=>m.employeeId));
+        // Who is marked absent
+        const absentIds=new Set(marks.filter(m=>m.type==="отсутствие"&&(m.time||m.createdAt||"").startsWith(todayStr2)).map(m=>m.employeeId));
+        // Today's production per worker
+        const todayOutputByWorker={};
+        (productionOutputs||[]).filter(o=>o.date.startsWith(todayStr2)).forEach(o=>{todayOutputByWorker[o.employeeId]=(todayOutputByWorker[o.employeeId]||0)+o.quantity;});
+
+        const prodWorkers=users.filter(u=>u.roleId===3&&u.status==="active");
+        const noShowWorkers=prodWorkers.filter(w=>!arrivedIds.has(w.id)&&!absentIds.has(w.id));
+        const normMissers=prodWorkers.filter(w=>arrivedIds.has(w.id)&&w.dailyNorm>0&&(todayOutputByWorker[w.id]||0)<w.dailyNorm);
+        const zeroWorkers=prodWorkers.filter(w=>arrivedIds.has(w.id)&&!(todayOutputByWorker[w.id]>0));
+
+        // Expired batches
+        const expiredBatches=(batches||[]).filter(b=>b.status==="активна"&&b.expiresAt&&new Date(b.expiresAt)<now);
+        // Stores with active debt
+        const storesWithDebt=(debts||[]).filter(d=>d.status!=="погашен");
+        const blacklistedStores=(clients||[]).filter(c=>c.status==="blacklist");
+        // Today defects
+        const todayDefects=(defects||[]).filter(d=>d.date===todayStr2);
+
+        const hasCritical=noShowWorkers.length>0||expiredBatches.length>0||blacklistedStores.length>0;
+
+        return(
+          <div style={{marginBottom:16}}>
+            {/* ─── Critical alerts ─── */}
+            {hasCritical&&(
+              <div style={{display:"grid",gap:6,marginBottom:12}}>
+                {noShowWorkers.map(w=>(
+                  <div key={w.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 14px",borderRadius:9,background:C.dangerBg,border:`1px solid ${C.danger}30`}}>
+                    <I.user size={14} style={{color:C.danger,flexShrink:0}}/>
+                    <span style={{fontSize:13,color:C.danger,fontWeight:700,flex:1}}>{w.name} — не отметил приход</span>
+                    <span style={{fontSize:10,color:C.dim}}>{w.jobTitle||""}</span>
+                  </div>
+                ))}
+                {expiredBatches.map(b=>{const p=products.find(x=>x.id===b.productId);return(
+                  <div key={b.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 14px",borderRadius:9,background:C.dangerBg,border:`1px solid ${C.danger}30`}}>
+                    <I.alert size={14} style={{color:C.danger,flexShrink:0}}/>
+                    <span style={{fontSize:13,color:C.danger,fontWeight:700,flex:1}}>Просрочено: {p?.name||"?"} — {b.quantity} ед.</span>
+                    <button onClick={()=>setPage("batches")} style={{fontSize:11,padding:"3px 9px",borderRadius:5,border:`1px solid ${C.danger}40`,background:`${C.danger}15`,color:C.danger,cursor:"pointer",fontFamily:"inherit"}}>Списать</button>
+                  </div>
+                );})}
+                {blacklistedStores.map(s=>(
+                  <div key={s.id} style={{display:"flex",alignItems:"center",gap:10,padding:"9px 14px",borderRadius:9,background:`${C.orange}12`,border:`1px solid ${C.orange}30`}}>
+                    <I.lock size={14} style={{color:C.orange,flexShrink:0}}/>
+                    <span style={{fontSize:13,color:C.orange,fontWeight:700,flex:1}}>ЧС: {s.name}</span>
+                    {s.blockReason&&<span style={{fontSize:11,color:C.dim}}>{s.blockReason}</span>}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* ─── Shift grid ─── */}
+            <Card s={{padding:"14px 16px"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:10,flexWrap:"wrap",gap:6}}>
+                <div style={{fontWeight:700,fontSize:14,color:C.text,display:"flex",alignItems:"center",gap:8}}>
+                  <I.clock size={15}/> Смена сегодня
+                </div>
+                <div style={{display:"flex",gap:10,fontSize:11,color:C.dim}}>
+                  <span><span style={{color:C.success,fontWeight:700}}>{arrivedIds.size}</span> пришли</span>
+                  <span><span style={{color:C.danger,fontWeight:700}}>{noShowWorkers.length}</span> не отмечено</span>
+                  {zeroWorkers.length>0&&<span><span style={{color:C.orange,fontWeight:700}}>{zeroWorkers.length}</span> без выработки</span>}
+                </div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(190px,1fr))",gap:8}}>
+                {prodWorkers.map(w=>{
+                  const arrived=arrivedIds.has(w.id);
+                  const departed=departedIds.has(w.id);
+                  const late=lateIds.has(w.id);
+                  const absent=absentIds.has(w.id);
+                  const produced=todayOutputByWorker[w.id]||0;
+                  const norm=w.dailyNorm||0;
+                  const normOk=norm===0||produced>=norm;
+                  const statusClr=absent?C.dim:!arrived?C.danger:late?C.orange:C.success;
+                  const statusLabel=absent?"отсутствует":!arrived?"не пришёл":late?"опоздал":"пришёл";
+                  return(
+                    <div key={w.id} style={{padding:"9px 12px",borderRadius:9,background:C.bg,border:`1px solid ${!arrived&&!absent?C.danger+"40":arrived&&!normOk&&norm>0?C.orange+"40":C.border}`,position:"relative"}}>
+                      <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:4}}>
+                        <div>
+                          <div style={{fontSize:12,fontWeight:700,color:C.text}}>{w.name.split(" ").slice(0,2).join(" ")}</div>
+                          <div style={{fontSize:10,color:C.dim}}>{w.jobTitle||"—"}</div>
+                        </div>
+                        <div style={{fontSize:10,fontWeight:700,color:statusClr,textAlign:"right"}}>
+                          {statusLabel}
+                          {departed&&<div style={{color:C.info}}>ушёл</div>}
+                        </div>
+                      </div>
+                      {(arrived||produced>0)&&(
+                        <div style={{display:"flex",alignItems:"center",gap:6,marginTop:4}}>
+                          <div style={{flex:1,height:4,background:C.surface2,borderRadius:2,overflow:"hidden"}}>
+                            {norm>0&&<div style={{height:"100%",width:`${Math.min(100,Math.round(produced/norm*100))}%`,background:normOk?C.success:C.orange,borderRadius:2}}/>}
+                          </div>
+                          <span style={{fontSize:10,fontWeight:700,color:normOk?C.success:C.orange,whiteSpace:"nowrap"}}>
+                            {produced}{norm>0?`/${norm}`:""}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+                {prodWorkers.length===0&&<div style={{fontSize:12,color:C.dim,padding:"8px 0"}}>Нет работников</div>}
+              </div>
+
+              {/* Mini summaries */}
+              <div style={{display:"flex",flexWrap:"wrap",gap:12,marginTop:12,paddingTop:10,borderTop:`1px solid ${C.border}`}}>
+                {storesWithDebt.length>0&&(
+                  <button onClick={()=>setPage("debts")} style={{fontSize:11,color:C.danger,background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",fontWeight:600,padding:0}}>
+                    💰 {storesWithDebt.length} магазинов в долгу
+                  </button>
+                )}
+                {todayDefects.length>0&&(
+                  <button onClick={()=>setPage("defects")} style={{fontSize:11,color:C.orange,background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",fontWeight:600,padding:0}}>
+                    ⚠ Брак сегодня: {todayDefects.reduce((s,d)=>s+d.quantity,0)} ед.
+                  </button>
+                )}
+                {normMissers.length>0&&(
+                  <button onClick={()=>setPage("salary")} style={{fontSize:11,color:C.orange,background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",fontWeight:600,padding:0}}>
+                    📉 {normMissers.length} не выполнили норму
+                  </button>
+                )}
+              </div>
+            </Card>
+          </div>
+        );
+      })()}
 
       {/* ═══ BUDGET BLOCK ═══ */}
       {canSeeFinance&&(
@@ -865,6 +1028,45 @@ const DashboardPage = ()=>{
         {canSeeFinance&&<Stat icon={<I.box size={18}/>} label="Склад (стоимость)" value={`${(totalValue/1000).toFixed(0)}т ₽`} color={C.cyan}/>}
       </div>
 
+      {/* === ACTIVE URGENT ORDERS === */}
+      {(()=>{
+        const activeOrders=clientOrders.filter(o=>o.status!=="отгружен"&&o.status!=="отменён").sort((a,b)=>{const p={срочный:0,важный:1,нормальный:2};return(p[a.priority]??2)-(p[b.priority]??2)||new Date(a.orderDate)-new Date(b.orderDate)});
+        if(!activeOrders.length) return null;
+        const urgent=activeOrders.filter(o=>o.priority==="срочный");
+        const important=activeOrders.filter(o=>o.priority==="важный");
+        return(
+          <Card s={{marginBottom:16}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+              <Title>Активные заказы</Title>
+              <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                {urgent.length>0&&<Badge color="danger">{urgent.length} срочных</Badge>}
+                {important.length>0&&<Badge color="orange">{important.length} важных</Badge>}
+                <button onClick={()=>setPage("clients")} style={{fontSize:11,color:C.primary,background:"none",border:"none",cursor:"pointer",fontFamily:"inherit",textDecoration:"underline"}}>все →</button>
+              </div>
+            </div>
+            <div style={{display:"grid",gap:6}}>
+              {activeOrders.slice(0,6).map(o=>{
+                const cl=clients.find(c=>c.id===o.clientId);
+                const priClr=o.priority==="срочный"?C.danger:o.priority==="важный"?C.orange:C.dim;
+                const stClr=o.status==="готов"?C.purple:o.status==="в производстве"?C.primary:o.status==="сборка"?C.orange:C.info;
+                return(
+                  <div key={o.id} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 12px",borderRadius:8,background:o.priority==="срочный"?`${C.danger}08`:o.priority==="важный"?`${C.orange}08`:C.bg,border:`1px solid ${o.priority==="срочный"?C.danger+"30":o.priority==="важный"?C.orange+"30":C.border}`,animation:o.priority==="срочный"?"pulseBorder 2s infinite":"none"}}>
+                    <div style={{width:3,height:32,borderRadius:2,background:priClr,flexShrink:0}}/>
+                    <div style={{flex:1,minWidth:0}}>
+                      <div style={{fontSize:12,fontWeight:600,color:C.text,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{cl?.name||"—"}</div>
+                      <div style={{fontSize:11,color:C.dim,marginTop:1}}>{o.items.map(it=>products.find(p=>p.id===it.productId)?.name||"?").join(", ")} · {o.total.toLocaleString("ru")} ₽</div>
+                    </div>
+                    <span style={{fontSize:10,fontWeight:600,padding:"2px 7px",borderRadius:4,background:stClr+"20",color:stClr,border:`1px solid ${stClr}30`,whiteSpace:"nowrap"}}>{o.status}</span>
+                    <div style={{fontSize:10,color:C.dim,whiteSpace:"nowrap"}}>{fmtShort(o.orderDate)}</div>
+                  </div>
+                );
+              })}
+              {activeOrders.length>6&&<div style={{fontSize:11,color:C.dim,textAlign:"center",padding:"4px 0"}}>+{activeOrders.length-6} ещё</div>}
+            </div>
+          </Card>
+        );
+      })()}
+
       {/* === FORECASTS === */}
       {forecasts.length>0&&!isWorker&&(
         <Card s={{marginBottom:16}}>
@@ -953,24 +1155,34 @@ const UsersPage = ()=>{
   const [edit,setEdit]=useState(null);
   const [search,setSearch]=useState("");
   const [toast,setToast]=useState(null);
-  const [form,setForm]=useState({name:"",email:"",password:"",roleId:2,status:"active",baseSalary:""});
+  const emptyForm={name:"",email:"",password:"",roleId:2,status:"active",baseSalary:"",jobTitle:"",payType:"сдельная",dailyNorm:"",pieceRate:"",fixedDayRate:"",comment:""};
+  const [form,setForm]=useState(emptyForm);
   const [errs,setErrs]=useState({});
 
   const filtered=users.filter(u=>u.name.toLowerCase().includes(search.toLowerCase())||u.email.toLowerCase().includes(search.toLowerCase()));
-  const openNew=()=>{setEdit(null);setForm({name:"",email:"",password:"",roleId:2,status:"active",baseSalary:""});setErrs({});setModal(true)};
-  const openEdit=u=>{setEdit(u);setForm({name:u.name,email:u.email,password:"",roleId:u.roleId,status:u.status,baseSalary:baseSalaries[u.id]||""});setErrs({});setModal(true)};
+  const openNew=()=>{setEdit(null);setForm(emptyForm);setErrs({});setModal(true)};
+  const openEdit=u=>{setEdit(u);setForm({name:u.name,email:u.email,password:"",roleId:u.roleId,status:u.status,baseSalary:baseSalaries[u.id]||"",jobTitle:u.jobTitle||"",payType:u.payType||"сдельная",dailyNorm:u.dailyNorm||"",pieceRate:u.pieceRate||"",fixedDayRate:u.fixedDayRate||"",comment:u.comment||""});setErrs({});setModal(true)};
   const validate=()=>{const e={};if(!form.name.trim())e.name="!";if(!form.email.trim())e.email="!";else if(!/\S+@\S+\.\S+/.test(form.email))e.email="Email";if(!edit&&!form.password)e.password="!";setErrs(e);return!Object.keys(e).length};
-  const save=()=>{
+  const save=async()=>{
     if(!validate())return;
     const sal=form.baseSalary?+form.baseSalary:0;
+    const extra={jobTitle:form.jobTitle,payType:form.payType,dailyNorm:form.dailyNorm?+form.dailyNorm:0,pieceRate:form.pieceRate?+form.pieceRate:0,fixedDayRate:form.fixedDayRate?+form.fixedDayRate:0,comment:form.comment};
     if(edit){
-      setUsers(p=>p.map(u=>u.id===edit.id?{...u,name:form.name,email:form.email,roleId:+form.roleId,status:form.status,...(form.password?{password:hashPassword(form.password)}:{})}:u));
+      // Update user fields — never touch password field in state; set via dedicated server endpoint
+      setUsers(p=>p.map(u=>u.id===edit.id?{...u,name:form.name,email:form.email,roleId:+form.roleId,status:form.status,...extra}:u));
+      if(form.password){
+        // Change password via server so it gets properly hashed
+        await fetch("/api/auth/change-password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId:edit.id,newPassword:form.password})}).catch(()=>{});
+      }
       if(sal>0) setBaseSalaries(p=>({...p,[edit.id]:sal}));
       else setBaseSalaries(p=>{const n={...p};delete n[edit.id];return n;});
       addLog(`Обновлён: ${form.name}`);setToast({message:"Обновлён",type:"success"});
     }else{
       const newId=Date.now();
-      setUsers(p=>[...p,{id:newId,name:form.name,email:form.email,password:hashPassword(form.password),roleId:+form.roleId,status:form.status,createdAt:new Date().toISOString()}]);
+      // New user: save placeholder password first, then set real hash via server
+      setUsers(p=>[...p,{id:newId,name:form.name,email:form.email,password:"__pending__",roleId:+form.roleId,status:form.status,...extra,createdAt:new Date().toISOString()}]);
+      // Set real password on server immediately after
+      await fetch("/api/auth/change-password",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({userId:newId,newPassword:form.password})}).catch(()=>{});
       if(sal>0) setBaseSalaries(p=>({...p,[newId]:sal}));
       addLog(`Создан: ${form.name}`);setToast({message:"Создан",type:"success"});
     }
@@ -982,23 +1194,45 @@ const UsersPage = ()=>{
     <div>
       <PageH title="Пользователи"><SearchBox value={search} onChange={e=>setSearch(e.target.value)}/><Btn onClick={openNew} icon={<I.plus size={15}/>}>Добавить</Btn></PageH>
       <Card s={{padding:0,overflow:"hidden"}}><div style={{overflowX:"auto"}}>
-        <table style={{width:"100%",borderCollapse:"collapse"}}><thead><tr><TH>ФИО</TH><TH>Email</TH><TH>Роль</TH><TH>Статус</TH><TH>Создан</TH><TH></TH></tr></thead>
+        <table style={{width:"100%",borderCollapse:"collapse"}}><thead><tr><TH>ФИО</TH><TH>Должность</TH><TH>Роль</TH><TH>Оплата</TH><TH>Статус</TH><TH></TH></tr></thead>
           <tbody>{filtered.map(u=>{const role=ROLES.find(r=>r.id===u.roleId);return(
             <tr key={u.id} style={{borderBottom:`1px solid ${C.border}`}}>
-              <TD s={{fontWeight:500}}>{u.name}</TD><TD s={{color:C.muted}}>{u.email}</TD>
+              <TD s={{fontWeight:500}}>
+                <div>{u.name}</div>
+                <div style={{fontSize:10,color:C.dim}}>{u.email}</div>
+              </TD>
+              <TD s={{color:C.muted,fontSize:12}}>{u.jobTitle||"—"}</TD>
               <TD><Badge color={u.roleId===1?"danger":u.roleId===2?"info":"primary"}>{role?.label}</Badge></TD>
-              <TD><Badge color={u.status==="active"?"success":"danger"}>{u.status==="active"?"Активен":"Заблокирован"}</Badge></TD>
-              <TD s={{color:C.dim,fontSize:12}}>{fmtShort(u.createdAt)}</TD>
+              <TD s={{fontSize:12}}>
+                <div style={{color:C.muted}}>{u.payType||"—"}</div>
+                {u.payType==="сдельная"&&u.pieceRate>0&&<div style={{color:C.dim,fontSize:10}}>{u.pieceRate}₽/ед.</div>}
+                {(u.payType==="фиксированная"||u.payType==="смешанная")&&baseSalaries[u.id]>0&&<div style={{color:C.dim,fontSize:10}}>{baseSalaries[u.id].toLocaleString("ru")}₽/мес</div>}
+              </TD>
+              <TD><Badge color={u.status==="active"?"success":"danger"}>{u.status==="active"?"Активен":"Заблок."}</Badge></TD>
               <TD><div style={{display:"flex",gap:4}}><Btn v="ghost" sz="sm" onClick={()=>openEdit(u)} icon={<I.edit size={14}/>}/>{u.id!==currentUser.id&&<Btn v="ghost" sz="sm" onClick={()=>toggleBlock(u)} icon={u.status==="active"?<I.lock size={14}/>:<I.unlock size={14}/>}/>}</div></TD>
             </tr>)})}</tbody>
         </table></div></Card>
-      <Modal open={modal} onClose={()=>setModal(false)} title={edit?"Редактировать":"Новый пользователь"}>
-        <Inp label="ФИО" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} error={errs.name}/>
-        <Inp label="Email" type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} error={errs.email}/>
-        <Inp label={edit?"Новый пароль":"Пароль"} type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} error={errs.password}/>
-        <Sel label="Роль" value={form.roleId} onChange={e=>setForm({...form,roleId:+e.target.value})} options={ROLES.map(r=>({value:r.id,label:r.label}))}/>
-        <Sel label="Статус" value={form.status} onChange={e=>setForm({...form,status:e.target.value})} options={[{value:"active",label:"Активен"},{value:"blocked",label:"Заблокирован"}]}/>
-        <Inp label="Базовая ставка (₽, необязательно)" type="number" min="0" value={form.baseSalary} onChange={e=>setForm({...form,baseSalary:e.target.value})} style={{}} placeholder="Например: 50000"/>
+      <Modal open={modal} onClose={()=>setModal(false)} title={edit?"Редактировать":"Новый сотрудник"} width={480}>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 12px"}}>
+          <Inp label="ФИО" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} error={errs.name}/>
+          <Inp label="Email" type="email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})} error={errs.email}/>
+        </div>
+        <Inp label={edit?"Новый пароль (оставить пустым = не менять)":"Пароль"} type="password" value={form.password} onChange={e=>setForm({...form,password:e.target.value})} error={errs.password}/>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 12px"}}>
+          <Sel label="Роль" value={form.roleId} onChange={e=>setForm({...form,roleId:+e.target.value})} options={ROLES.map(r=>({value:r.id,label:r.label}))}/>
+          <Sel label="Должность" value={form.jobTitle} onChange={e=>setForm({...form,jobTitle:e.target.value})} options={[{value:"",label:"Не указана"},...JOB_TITLES.map(t=>({value:t,label:t}))]}/>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 12px"}}>
+          <Sel label="Тип оплаты" value={form.payType} onChange={e=>setForm({...form,payType:e.target.value})} options={PAY_TYPES.map(t=>({value:t,label:t}))}/>
+          <Sel label="Статус" value={form.status} onChange={e=>setForm({...form,status:e.target.value})} options={[{value:"active",label:"Активен"},{value:"blocked",label:"Заблокирован"}]}/>
+        </div>
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:"0 12px"}}>
+          <Inp label="Ставка ₽/мес" type="number" min="0" value={form.baseSalary} onChange={e=>setForm({...form,baseSalary:e.target.value})} placeholder="0"/>
+          <Inp label="Ставка ₽/день" type="number" min="0" value={form.fixedDayRate} onChange={e=>setForm({...form,fixedDayRate:e.target.value})} placeholder="0"/>
+          <Inp label="Сдельная ₽/ед." type="number" min="0" value={form.pieceRate} onChange={e=>setForm({...form,pieceRate:e.target.value})} placeholder="0"/>
+          <Inp label="Норма ед./день" type="number" min="0" value={form.dailyNorm} onChange={e=>setForm({...form,dailyNorm:e.target.value})} placeholder="0"/>
+        </div>
+        <Txa label="Комментарий" value={form.comment} onChange={e=>setForm({...form,comment:e.target.value})} placeholder="Заметки..."/>
         <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:6}}><Btn v="secondary" onClick={()=>setModal(false)}>Отмена</Btn><Btn onClick={save}>{edit?"Сохранить":"Создать"}</Btn></div>
       </Modal>
       {toast&&<Toast {...toast} onClose={()=>setToast(null)}/>}
@@ -1341,14 +1575,14 @@ const ProductsPage = ()=>{
 // TASKS
 // ═══════════════════════════════════════════════════════════════
 const TasksPage = ()=>{
-  const {tasks,setTasks,taskEmployees,setTaskEmployees,products,setProducts,users,rawMaterials,setRawMaterials,recipes,setRawMovements,addLog,currentUser,addNotification,employeeHistory,setEmployeeHistory}=useContext(AppContext);
+  const {tasks,setTasks,taskEmployees,setTaskEmployees,products,setProducts,users,rawMaterials,recipes,addLog,currentUser,addNotification,productionOutputs,setProductionOutputs,setBatches,applyOutput,applyServerState}=useContext(AppContext);
   const [modal,setModal]=useState(false);
   const [completeModal,setCompleteModal]=useState(null);
   const [toast,setToast]=useState(null);
   const [errs,setErrs]=useState({});
-  const [filter,setFilter]=useState("all");
   const role=ROLES.find(r=>r.id===currentUser.roleId);
   const isWorker=role?.name==="worker";
+  const [filter,setFilter]=useState(isWorker?"активные":"all");
   const canCreate=role?.name==="admin"||role?.name==="manager";
 
   const ap=products.filter(p=>!p.deleted);
@@ -1359,8 +1593,17 @@ const TasksPage = ()=>{
 
   const filtered=useMemo(()=>{
     let l=isWorker?tasks.filter(t=>(t.userIds||[]).includes(currentUser.id)):[...tasks];
-    if(filter!=="all") l=l.filter(t=>t.status===filter);
-    return l.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+    if(filter==="активные") l=l.filter(t=>t.status==="назначено"||t.status==="в работе");
+    else if(filter!=="all") l=l.filter(t=>t.status===filter);
+    // Sort: overdue first, then by deadline
+    return l.sort((a,b)=>{
+      const ao=!a.completedAt&&new Date()>new Date(a.deadline);
+      const bo=!b.completedAt&&new Date()>new Date(b.deadline);
+      if(ao&&!bo) return -1; if(!ao&&bo) return 1;
+      if(a.status==="в работе"&&b.status!=="в работе") return -1;
+      if(a.status!=="в работе"&&b.status==="в работе") return 1;
+      return new Date(a.deadline)-new Date(b.deadline);
+    });
   },[tasks,filter,isWorker,currentUser]);
 
   const checkRaw=(productId,qty)=>{
@@ -1422,54 +1665,104 @@ const TasksPage = ()=>{
     setCompleteModal(t);
   };
 
-  const doComplete=()=>{
+  const doComplete=async()=>{
     const t=completeModal;if(!t)return;
+    // Guard: task already completed (double-click / race condition)
+    if(t.status==="завершено"||t.status==="просрочено"){setCompleteModal(null);return;}
+    // Guard: productionOutput already exists for this task
+    if((productionOutputs||[]).some(o=>o.taskId===t.id)){
+      setToast({message:"Выпуск для этого задания уже создан",type:"warn"});
+      setCompleteModal(null);return;
+    }
     const totalAssigned=Object.values(empQtys).reduce((s,v)=>s+(+v||0),0);
     if(totalAssigned!==t.quantity){setToast({message:`Сумма (${totalAssigned}) должна равняться ${t.quantity}`,type:"error"});return}
-    const now=new Date().toISOString();
-    const recipe=recipes.find(r=>r.productId===t.productId);
-    if(recipe){
-      recipe.items.forEach(it=>{
-        const needed=it.qty*t.quantity;
-        setRawMaterials(p=>p.map(r=>r.id===it.rawId?{...r,stock:+(r.stock-needed).toFixed(3),updatedAt:now}:r));
-        setRawMovements(p=>[...p,{id:Date.now()+Math.random(),rawId:it.rawId,type:"out",quantity:+needed.toFixed(3),reason:`Задание #${t.id}`,date:now}]);
-      });
+
+    // ── Worker path: server action endpoint ──
+    // Workers cannot write manager-only keys (dk_batches, dk_products, dk_raw_mats, etc.)
+    // so we delegate all derived state updates to the server atomically.
+    const role=ROLES.find(r=>r.id===currentUser.roleId);
+    if(role?.name==="worker"){
+      try{
+        const r=await fetch("/api/actions/task-complete",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({taskId:t.id,quantities:empQtys}),
+        });
+        const data=await r.json();
+        if(!r.ok){setToast({message:data.error||"Ошибка сервера",type:"error"});return;}
+        applyServerState(data.state);
+        setToast({message:"Завершено!",type:"success"});
+      }catch(e){
+        setToast({message:"Нет соединения с сервером",type:"error"});
+      }
+      setCompleteModal(null);
+      return;
     }
-    setProducts(p=>p.map(x=>x.id===t.productId?{...x,stock:x.stock+t.quantity,updatedAt:now}:x));
+
+    // ── Manager / Admin path (unchanged) ──
+    const now=new Date().toISOString();
     const isLate=new Date(now)>new Date(t.deadline);
+
+    // 1. Update task and taskEmployee statuses
     setTasks(p=>p.map(x=>x.id===t.id?{...x,status:isLate?"просрочено":"завершено",completedAt:now}:x));
-    // Update task_employees with individual produced quantities
     Object.entries(empQtys).forEach(([uid,qty])=>{
       setTaskEmployees(p=>p.map(te=>te.taskId===t.id&&te.employeeId===+uid?{...te,producedQty:+qty,status:isLate?"просрочено":"завершено"}:te));
     });
-    // Update employee_history
-    const dateStr=now.slice(0,10);
+
+    // 2. One batch for the entire task (all workers combined = t.quantity).
+    //    batchId is shared across all per-worker outputs so revertOutput knows which batch to remove.
+    const sharedBatchId=t.id+0.5;
+    const expiresAt=new Date(new Date(now).getTime()+7*24*3600*1000).toISOString();
+    setBatches(p=>[...(p||[]),{id:sharedBatchId,productId:t.productId,quantity:t.quantity,producedAt:now,expiresAt,createdBy:currentUser.id,status:"активна",note:t.note||"",taskId:t.id}]);
+
+    // 3. One productionOutput per worker (with their individual qty share).
+    //    applyOutput handles: stock, inventoryMovements, rawMaterials, rawMovements, employeeHistory, productionPlans.
+    //    First worker's output carries batchId so revertOutput can remove the batch;
+    //    subsequent workers carry batchId:null (batch already created above).
+    let runningStock=products.find(p=>p.id===t.productId)?.stock||0;
+    let firstWorker=true;
     Object.entries(empQtys).forEach(([uid,qty])=>{
-      setEmployeeHistory(p=>{
-        const existing=p.find(h=>h.employeeId===+uid&&h.date===dateStr);
-        if(existing){
-          return p.map(h=>h.id===existing.id?{...h,tasksCompleted:h.tasksCompleted+1,producedQty:h.producedQty+(+qty)}:h);
-        }
-        return [...p,{id:Date.now()+Math.random(),employeeId:+uid,date:dateStr,attendance:"present",tasksCompleted:1,producedQty:+qty,workStart:"09:00",workEnd:fmtTime(now),comment:""}];
-      });
+      if(+qty<=0) return;
+      const outId=Date.now()+Math.random();
+      const newOut={id:outId,productId:t.productId,employeeId:+uid,quantity:+qty,date:now,taskId:t.id,source:"task",batchId:firstWorker?sharedBatchId:null,comment:t.note||"",createdAt:now,createdBy:currentUser.id};
+      firstWorker=false;
+      setProductionOutputs(p=>[...(p||[]),newOut]);
+      applyOutput(newOut,runningStock);
+      runningStock+=+qty;
     });
+
+    // 4. Logging, notifications, low-stock alerts
     const pName=products.find(p=>p.id===t.productId)?.name;
     const names=(t.userIds||[]).map(uid=>users.find(u=>u.id===uid)?.name?.split(" ").slice(0,2).join(" ")).join(", ");
     addLog(`Завершено: ${pName} x${t.quantity}${isLate?" (просрочено)":""} \u2192 ${names}`);
     addNotification({title:`Задание ${isLate?"просрочено":"выполнено"}: ${pName}`,type:isLate?"ошибка":"информация",content:`${names} ${isLate?"просрочили":"завершили"}: ${pName} x${t.quantity}`,targetAll:true});
+    const recipe=recipes.find(r=>r.productId===t.productId);
     rawMaterials.forEach(r=>{
-      const cur=r.stock-(recipe?.items.find(x=>x.rawId===r.id)?.qty||0)*t.quantity;
-      if(cur<=r.minStock){addNotification({title:`Низкий остаток: ${r.name}`,type:"предупреждение",content:`${r.name}: остаток ${cur.toFixed(1)} ${r.unit} при минимуме ${r.minStock} ${r.unit}`,targetAll:true})}
+      const est=r.stock-(recipe?.items.find(x=>x.rawId===r.id)?.qty||0)*t.quantity;
+      if(est<=r.minStock){addNotification({title:`Низкий остаток: ${r.name}`,type:"предупреждение",content:`${r.name}: ~${est.toFixed(1)} ${r.unit} (мин. ${r.minStock} ${r.unit})`,targetAll:true});}
     });
     setToast({message:isLate?"Завершено с опозданием":"Завершено!",type:isLate?"warn":"success"});
     setCompleteModal(null);
   };
 
-  const startTask=(t)=>{
-    setTasks(p=>p.map(x=>x.id===t.id?{...x,status:"в работе"}:x));
-    setTaskEmployees(p=>p.map(te=>te.taskId===t.id?{...te,status:"в работе"}:te));
-    addLog(`Начато: задание #${t.id}`);
-    setToast({message:"Задание начато",type:"info"});
+  const startTask=async(t)=>{
+    try{
+      const r=await fetch("/api/actions/task-start",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({taskId:t.id}),
+      });
+      if(!r.ok){
+        const err=await r.json().catch(()=>({}));
+        setToast({message:err.error||"Не удалось начать задание",type:"error"});
+        return;
+      }
+      const data=await r.json();
+      if(data.state)applyServerState(data.state);
+      setToast({message:"Задание начато",type:"info"});
+    }catch(e){
+      setToast({message:"Нет связи с сервером",type:"error"});
+    }
   };
 
   const tColor=s=>s==="завершено"?"success":s==="в работе"?"info":s==="просрочено"?"danger":"primary";
@@ -1478,8 +1771,8 @@ const TasksPage = ()=>{
     <div>
       <PageH title="Производственные задания">
         <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-          {["all",...TASK_STATUSES].map(s=>(
-            <button key={s} onClick={()=>setFilter(s)} style={{padding:"6px 14px",borderRadius:7,border:`1px solid ${filter===s?C.primary:C.border}`,background:filter===s?C.primaryBg:C.surface,color:filter===s?C.primary:C.muted,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{s==="all"?"Все":s}</button>
+          {["all","активные",...TASK_STATUSES].map(s=>(
+            <button key={s} onClick={()=>setFilter(s)} style={{padding:"6px 14px",borderRadius:7,border:`1px solid ${filter===s?C.primary:C.border}`,background:filter===s?C.primaryBg:C.surface,color:filter===s?C.primary:C.muted,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{s==="all"?"Все":s==="активные"?"Активные":s}</button>
           ))}
         </div>
         {canCreate&&<Btn onClick={openNew} icon={<I.plus size={15}/>}>Новое задание</Btn>}
@@ -1492,13 +1785,17 @@ const TasksPage = ()=>{
           const tEmps=taskEmployees.filter(te=>te.taskId===t.id);
           const isOverdue=!t.completedAt&&new Date()>new Date(t.deadline)&&t.status!=="завершено"&&t.status!=="просрочено";
           const canAct=isWorker?(t.userIds||[]).includes(currentUser.id):true;
+          const msLeft=new Date(t.deadline).getTime()-Date.now();
+          const hoursLeft=Math.floor(Math.abs(msLeft)/3600000);
+          const dlLabel=t.completedAt?`Завершено: ${fmtShort(t.completedAt)}`:isOverdue?`Просрочено на ${hoursLeft} ч`:msLeft<3600000?`Срок: < 1 ч`:msLeft<86400000?`Срок: ${hoursLeft} ч`:msLeft<172800000?`Срок: завтра`:fmtShort(t.deadline);
+          const dlColor=t.completedAt?C.success:isOverdue?C.danger:msLeft<3600000?C.danger:msLeft<86400000?C.orange:C.dim;
           return(
-            <Card key={t.id} s={{display:"flex",flexDirection:"column",gap:10,padding:"14px 18px",borderLeft:`3px solid ${isOverdue?C.danger:t.status==="завершено"?C.success:t.status==="в работе"?C.info:C.primary}`}}>
+            <Card key={t.id} s={{display:"flex",flexDirection:"column",gap:10,padding:"14px 18px",borderLeft:`3px solid ${isOverdue?C.danger:t.status==="завершено"?C.success:t.status==="в работе"?C.info:C.primary}`,background:isOverdue?`${C.danger}05`:""}}>
               <div style={{display:"flex",flexWrap:"wrap",alignItems:"center",gap:14}}>
                 <div style={{flex:"1 1 200px"}}>
                   <div style={{fontSize:14,fontWeight:700,color:C.text}}>{prod?.name||"\u2014"} <span style={{fontWeight:400,color:C.muted}}>x{t.quantity}</span></div>
-                  <div style={{fontSize:12,color:C.dim,marginTop:2}}>Создано: {fmtShort(t.createdAt)} \u00b7 Срок: {fmtShort(t.deadline)}</div>
-                  {t.completedAt&&<div style={{fontSize:11,color:C.dim}}>Завершено: {fmtDate(t.completedAt)}</div>}
+                  <div style={{fontSize:12,color:dlColor,marginTop:2,display:"flex",alignItems:"center",gap:4}}><I.clock size={11}/>{dlLabel}</div>
+                  {t.startedAt&&t.status==="в работе"&&<div style={{fontSize:11,color:C.info,marginTop:1}}>В работе: {Math.floor((Date.now()-new Date(t.startedAt).getTime())/60000)} мин</div>}
                   {t.note&&<div style={{fontSize:11,color:C.dim,fontStyle:"italic",marginTop:2}}>{t.note}</div>}
                 </div>
                 <Badge color={isOverdue?"danger":tColor(t.status)}>{isOverdue?"просрочено":t.status}</Badge>
@@ -1865,7 +2162,7 @@ const EmployeeStatsPage = ()=>{
 // NOTIFICATIONS PAGE
 // ═══════════════════════════════════════════════════════════════
 const NotificationsPage = ()=>{
-  const {notifications,setNotifications,users,currentUser,addLog}=useContext(AppContext);
+  const {notifications,setNotifications,setNotifsL,users,currentUser,addLog}=useContext(AppContext);
   const [modal,setModal]=useState(false);
   const [edit,setEdit]=useState(null);
   const [confirm,setConfirm]=useState(null);
@@ -1886,8 +2183,18 @@ const NotificationsPage = ()=>{
     return list.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
   },[notifications,search,fType,isAdmin,currentUser]);
 
-  const markRead=(id)=>{
-    setNotifications(p=>p.map(n=>n.id===id?{...n,readBy:[...(n.readBy||[]).filter(x=>x!==currentUser.id),currentUser.id]}:n));
+  // Workers cannot write to dk_notifications directly — use the action endpoint
+  // so they can still mark notifications as read for themselves.
+  const markRead=async(id)=>{
+    try{
+      const r=await fetch("/api/actions/notifications/read",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({notificationId:id}),
+      });
+      if(!r.ok) return;
+      const data=await r.json();
+      if(data?.dk_notifications) setNotifsL(data.dk_notifications);
+    }catch{}
   };
 
   const openNew=()=>{setEdit(null);setForm(empty);setErrs({});setModal(true)};
@@ -1986,134 +2293,189 @@ const NotificationsPage = ()=>{
 // MARKS PAGE
 // ═══════════════════════════════════════════════════════════════
 const MarksPage = ()=>{
-  const {marks,setMarks,users,tasks,products,currentUser,addLog}=useContext(AppContext);
+  const {marks,setMarks,users,productionOutputs,currentUser,addLog,applyServerState}=useContext(AppContext);
   const [modal,setModal]=useState(false);
-  const [edit,setEdit]=useState(null);
   const [confirm,setConfirm]=useState(null);
   const [toast,setToast]=useState(null);
   const [search,setSearch]=useState("");
+  const [fDate,setFDate]=useState(()=>new Date().toISOString().slice(0,10));
   const [fType,setFType]=useState("all");
   const [fEmployee,setFEmployee]=useState("all");
   const [errs,setErrs]=useState({});
   const role=ROLES.find(r=>r.id===currentUser.roleId);
-  const isAdmin=role?.name==="admin";
+  const isAdmin=role?.name==="admin"||role?.name==="owner";
   const isManager=role?.name==="manager";
   const isWorker=role?.name==="worker";
-  const canCreate=isAdmin||isManager;
-  const canEditDel=isAdmin;
+  const canManage=isAdmin||isManager;
 
-  const workers=users.filter(u=>u.roleId===3);
-  const completedTasks=tasks.filter(t=>t.status==="завершено"||t.status==="просрочено");
-  const empty={employeeId:workers[0]?.id||"",markType:"присутствие",relatedTaskId:"",comment:""};
-  const [form,setForm]=useState(empty);
+  const workers=users.filter(u=>u.status==="active");
+  const todayStr=new Date().toISOString().slice(0,10);
 
-  const visible=useMemo(()=>{
-    let list=isWorker?marks.filter(m=>m.employeeId===currentUser.id):[...marks];
-    if(search){const s=search.toLowerCase();list=list.filter(m=>{const emp=users.find(u=>u.id===m.employeeId);return emp?.name.toLowerCase().includes(s)||m.comment?.toLowerCase().includes(s)})}
-    if(fType!=="all")list=list.filter(m=>m.markType===fType);
-    if(fEmployee!=="all")list=list.filter(m=>m.employeeId===+fEmployee);
-    return list.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
-  },[marks,search,fType,fEmployee,isWorker,currentUser]);
+  const emptyForm={employeeId:isWorker?currentUser.id:(workers[0]?.id||""),type:"приход",time:new Date().toISOString().slice(0,16),reason:"",comment:""};
+  const [form,setForm]=useState(emptyForm);
 
-  const openNew=()=>{setEdit(null);setForm(empty);setErrs({});setModal(true)};
-  const openEdit=m=>{setEdit(m);setForm({employeeId:m.employeeId,markType:m.markType,relatedTaskId:m.relatedTaskId||"",comment:m.comment||""});setErrs({});setModal(true)};
-  const validate=()=>{const e={};if(!form.employeeId)e.employeeId="!";setErrs(e);return!Object.keys(e).length};
+  // Records for selected date
+  const dateMarks=useMemo(()=>{
+    let l=isWorker?marks.filter(m=>m.employeeId===currentUser.id):marks;
+    l=l.filter(m=>(m.time||m.createdAt||"").slice(0,10)===fDate);
+    if(fType!=="all") l=l.filter(m=>m.type===fType||m.markType===fType);
+    if(search){const s=search.toLowerCase();l=l.filter(m=>{const emp=users.find(u=>u.id===m.employeeId);return emp?.name.toLowerCase().includes(s)||m.comment?.toLowerCase().includes(s)});}
+    return l.sort((a,b)=>new Date(a.time||a.createdAt)-new Date(b.time||b.createdAt));
+  },[marks,fDate,fType,search,isWorker,currentUser]);
 
-  const save=()=>{
-    if(!validate())return;
-    const empName=users.find(u=>u.id===+form.employeeId)?.name?.split(" ").slice(0,2).join(" ");
-    if(edit){
-      setMarks(p=>p.map(m=>m.id===edit.id?{...m,employeeId:+form.employeeId,markType:form.markType,relatedTaskId:form.relatedTaskId?+form.relatedTaskId:null,comment:form.comment}:m));
-      addLog(`Отметка обновлена: ${empName}`);
-      setToast({message:"Обновлено",type:"success"});
-    }else{
-      setMarks(p=>[...p,{id:Date.now(),employeeId:+form.employeeId,markType:form.markType,relatedTaskId:form.relatedTaskId?+form.relatedTaskId:null,createdBy:currentUser.id,createdAt:new Date().toISOString(),comment:form.comment}]);
-      addLog(`Отметка: ${form.markType} — ${empName}`);
-      setToast({message:"Отметка создана",type:"success"});
+  // Today's attendance status per worker
+  const todayByWorker=useMemo(()=>{
+    const today=marks.filter(m=>(m.time||m.createdAt||"").slice(0,10)===todayStr);
+    const byW={};
+    workers.forEach(w=>{
+      const wm=today.filter(m=>m.employeeId===w.id);
+      const arrived=wm.find(m=>m.type==="приход"||m.markType==="присутствие");
+      const left=wm.find(m=>m.type==="уход");
+      const late=wm.find(m=>m.type==="опоздание");
+      const absent=wm.find(m=>m.type==="отсутствие");
+      byW[w.id]={arrived,left,late,absent,produced:(productionOutputs||[]).filter(o=>o.employeeId===w.id&&(o.date||"").slice(0,10)===todayStr).reduce((s,o)=>s+o.quantity,0)};
+    });
+    return byW;
+  },[marks,workers,todayStr,productionOutputs]);
+
+  const postAttendance=async(employeeId,type,extra={})=>{
+    try{
+      const r=await fetch("/api/actions/attendance-mark",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({employeeId,type,...extra}),
+      });
+      if(!r.ok){
+        const err=await r.json().catch(()=>({}));
+        setToast({message:err.error||"Не удалось отметить",type:"error"});
+        return false;
+      }
+      const data=await r.json();
+      if(data.state)applyServerState(data.state);
+      return true;
+    }catch(e){
+      setToast({message:"Нет связи с сервером",type:"error"});
+      return false;
     }
-    setModal(false);
   };
 
-  const del=m=>{const empName=users.find(u=>u.id===m.employeeId)?.name?.split(" ").slice(0,2).join(" ");setConfirm({title:"Удалить отметку?",message:`Удалить отметку для ${empName}?`,onConfirm:()=>{setMarks(p=>p.filter(x=>x.id!==m.id));addLog(`Удалена отметка: ${empName}`);setToast({message:"Удалено",type:"error"});setConfirm(null)}})};
-
-  const mtColor=t=>t==="присутствие"?"success":"info";
-  const mtIcon=t=>t==="присутствие"?<I.user size={14}/>:<I.check size={14}/>;
-
-  const todayPresent=marks.filter(m=>m.markType==="присутствие"&&fmtShort(m.createdAt)===fmtShort(new Date().toISOString())).map(m=>m.employeeId);
-  const markPresence=(wId)=>{
-    if(todayPresent.includes(wId)) return;
-    setMarks(p=>[...p,{id:Date.now(),employeeId:wId,markType:"присутствие",relatedTaskId:null,createdBy:currentUser.id,createdAt:new Date().toISOString(),comment:""}]);
-    const empName=users.find(u=>u.id===wId)?.name?.split(" ").slice(0,2).join(" ");
-    addLog(`Присутствие: ${empName}`);
-    setToast({message:`${empName} — отмечен`,type:"success"});
+  const markSelf=async(type)=>{
+    if(await postAttendance(currentUser.id,type)){
+      setToast({message:`${type} отмечен`,type:"success"});
+    }
   };
+
+  const quickMark=async(wId,type)=>{
+    const empName=users.find(u=>u.id===wId)?.name?.split(" ")[0]||"";
+    if(await postAttendance(wId,type)){
+      setToast({message:`${empName} — ${type}`,type:"success"});
+    }
+  };
+
+  const saveModal=()=>{
+    const e={};if(!form.employeeId)e.employeeId="!";if(!form.type)e.type="!";
+    setErrs(e);if(Object.keys(e).length)return;
+    const now=new Date().toISOString();
+    setMarks(p=>[...p,{id:Date.now(),employeeId:+form.employeeId,type:form.type,time:form.time?new Date(form.time).toISOString():now,reason:form.reason,comment:form.comment,createdBy:currentUser.id,createdAt:now}]);
+    const empName=users.find(u=>u.id===+form.employeeId)?.name?.split(" ")[0]||"";
+    addLog(`${form.type}: ${empName} (${form.comment||"—"})`);
+    setToast({message:"Отметка добавлена",type:"success"});setModal(false);
+  };
+
+  const delMark=m=>{setConfirm({title:"Удалить отметку?",message:"Это действие нельзя отменить",onConfirm:()=>{setMarks(p=>p.filter(x=>x.id!==m.id));setToast({message:"Удалено",type:"error"});setConfirm(null)}})};
 
   return(
     <div>
-      <PageH title="Отметки сотрудников">
-        <SearchBox value={search} onChange={e=>setSearch(e.target.value)}/>
-        <select value={fType} onChange={e=>setFType(e.target.value)} style={{padding:"7px 9px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,fontSize:12,fontFamily:"inherit"}}><option value="all">Все типы</option>{MARK_TYPES.map(t=><option key={t} value={t}>{t}</option>)}</select>
-        {!isWorker&&<select value={fEmployee} onChange={e=>setFEmployee(e.target.value)} style={{padding:"7px 9px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,fontSize:12,fontFamily:"inherit"}}><option value="all">Все сотрудники</option>{workers.map(w=><option key={w.id} value={w.id}>{w.name.split(" ").slice(0,2).join(" ")}</option>)}</select>}
-        {canCreate&&<Btn onClick={openNew} icon={<I.plus size={15}/>}>Новая отметка</Btn>}
+      <PageH title="Посещаемость / Смена">
+        <input type="date" value={fDate} onChange={e=>setFDate(e.target.value)} style={{padding:"7px 9px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,fontSize:12,fontFamily:"inherit"}}/>
+        <select value={fType} onChange={e=>setFType(e.target.value)} style={{padding:"7px 9px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,fontSize:12,fontFamily:"inherit"}}>
+          <option value="all">Все типы</option>
+          {ATTENDANCE_TYPES.map(t=><option key={t} value={t}>{t}</option>)}
+        </select>
+        {canManage&&<Btn onClick={()=>{setForm(emptyForm);setErrs({});setModal(true)}} icon={<I.plus size={15}/>}>Добавить</Btn>}
       </PageH>
 
-      {canCreate&&(
-        <Card s={{marginBottom:16}}>
-          <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:10}}>
-            <I.user size={16}/>
-            <span style={{fontSize:14,fontWeight:700,color:C.text}}>Присутствие сегодня</span>
-            <span style={{fontSize:12,color:C.dim}}>{fmtShort(new Date().toISOString())}</span>
+      {/* Worker self-service */}
+      {isWorker&&fDate===todayStr&&(
+        <Card s={{marginBottom:16,padding:"14px 16px"}}>
+          <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:12}}>Моя смена сегодня</div>
+          <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+            {!todayByWorker[currentUser.id]?.arrived&&!todayByWorker[currentUser.id]?.absent&&(
+              <button onClick={()=>markSelf("приход")} style={{padding:"10px 20px",borderRadius:8,border:`1px solid ${C.success}40`,background:`${C.success}15`,color:C.success,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>✅ Отметить приход</button>
+            )}
+            {todayByWorker[currentUser.id]?.arrived&&!todayByWorker[currentUser.id]?.left&&(
+              <button onClick={()=>markSelf("уход")} style={{padding:"10px 20px",borderRadius:8,border:`1px solid ${C.info}40`,background:`${C.info}15`,color:C.info,fontSize:13,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}}>🚪 Отметить уход</button>
+            )}
+            {todayByWorker[currentUser.id]?.arrived&&<div style={{padding:"10px 14px",borderRadius:8,background:`${C.success}10`,border:`1px solid ${C.success}30`,fontSize:12,color:C.success}}>✓ Пришёл в {fmtTime(todayByWorker[currentUser.id].arrived.time)}</div>}
+            {todayByWorker[currentUser.id]?.left&&<div style={{padding:"10px 14px",borderRadius:8,background:`${C.info}10`,border:`1px solid ${C.info}30`,fontSize:12,color:C.info}}>🚪 Ушёл в {fmtTime(todayByWorker[currentUser.id].left.time)}</div>}
           </div>
-          <div style={{display:"flex",flexWrap:"wrap",gap:8}}>
+        </Card>
+      )}
+
+      {/* Manager today overview */}
+      {canManage&&fDate===todayStr&&(
+        <Card s={{marginBottom:16}}>
+          <div style={{fontSize:14,fontWeight:700,color:C.text,marginBottom:12}}>Сводка на сегодня — {fmtShort(todayStr)}</div>
+          <div style={{display:"grid",gap:6}}>
             {workers.map(w=>{
-              const present=todayPresent.includes(w.id);
+              const ws=todayByWorker[w.id]||{};
+              const status=ws.absent?"отсутствует":ws.arrived?ws.left?"завершил смену":"на смене":"не отмечен";
+              const statusColor=ws.absent?C.danger:ws.arrived?ws.left?C.info:C.success:C.dim;
               return(
-                <button key={w.id} onClick={()=>markPresence(w.id)} disabled={present} style={{display:"flex",alignItems:"center",gap:6,padding:"8px 14px",borderRadius:8,border:`1px solid ${present?C.success+"40":C.border}`,background:present?C.successBg:C.surface2,color:present?C.success:C.text,cursor:present?"default":"pointer",fontFamily:"inherit",fontSize:13,fontWeight:500,opacity:present?.8:1,transition:"all .15s"}}>
-                  {present?<I.check size={14}/>:<I.user size={14}/>}
-                  {w.name.split(" ").slice(0,2).join(" ")}
-                  {present&&<span style={{fontSize:10,marginLeft:2}}>\u2713</span>}
-                </button>
+                <div key={w.id} style={{display:"flex",alignItems:"center",gap:12,padding:"8px 10px",borderRadius:8,background:C.surface2,border:`1px solid ${C.border}`}}>
+                  <div style={{width:32,height:32,borderRadius:8,background:`${statusColor}20`,color:statusColor,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:14,flexShrink:0}}>{w.name.charAt(0)}</div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,fontWeight:600,color:C.text}}>{w.name.split(" ").slice(0,2).join(" ")}</div>
+                    <div style={{fontSize:11,color:C.dim}}>{w.jobTitle||ROLES.find(r=>r.id===w.roleId)?.label}</div>
+                  </div>
+                  <div style={{fontSize:12,color:statusColor,fontWeight:600,minWidth:90,textAlign:"right"}}>{status}</div>
+                  {ws.arrived&&<div style={{fontSize:11,color:C.dim,whiteSpace:"nowrap"}}>↑{fmtTime(ws.arrived.time)}{ws.left?` ↓${fmtTime(ws.left.time)}`:""}</div>}
+                  {ws.produced>0&&<Badge color="success" s={{fontSize:10}}>{ws.produced} ед.</Badge>}
+                  {!ws.arrived&&!ws.absent&&(
+                    <div style={{display:"flex",gap:4}}>
+                      <button onClick={()=>quickMark(w.id,"приход")} style={{fontSize:11,padding:"3px 8px",borderRadius:5,border:`1px solid ${C.success}40`,background:`${C.success}10`,color:C.success,cursor:"pointer",fontFamily:"inherit"}}>↑Пришёл</button>
+                      <button onClick={()=>quickMark(w.id,"отсутствие")} style={{fontSize:11,padding:"3px 8px",borderRadius:5,border:`1px solid ${C.danger}40`,background:`${C.danger}10`,color:C.danger,cursor:"pointer",fontFamily:"inherit"}}>Нет</button>
+                    </div>
+                  )}
+                  {ws.arrived&&!ws.left&&<button onClick={()=>quickMark(w.id,"уход")} style={{fontSize:11,padding:"3px 8px",borderRadius:5,border:`1px solid ${C.info}40`,background:`${C.info}10`,color:C.info,cursor:"pointer",fontFamily:"inherit"}}>↓Ушёл</button>}
+                </div>
               );
             })}
           </div>
         </Card>
       )}
 
+      {/* Records table */}
       <Card s={{padding:0,overflow:"hidden"}}><div style={{overflowX:"auto"}}>
-        <table style={{width:"100%",borderCollapse:"collapse"}}><thead><tr>
-          <TH>Дата/Время</TH><TH>Сотрудник</TH><TH>Тип</TH><TH>Заказ</TH><TH>Автор</TH><TH>Комментарий</TH>{canEditDel&&<TH></TH>}
-        </tr></thead>
-          <tbody>{visible.map(m=>{
+        <table style={{width:"100%",borderCollapse:"collapse"}}>
+          <thead><tr><TH>Время</TH><TH>Сотрудник</TH><TH>Событие</TH><TH>Причина</TH><TH>Комментарий</TH>{canManage&&<TH></TH>}</tr></thead>
+          <tbody>{dateMarks.map(m=>{
             const emp=users.find(u=>u.id===m.employeeId);
-            const author=users.find(u=>u.id===m.createdBy);
-            const task=m.relatedTaskId?tasks.find(t=>t.id===m.relatedTaskId):null;
-            const prod=task?products.find(p=>p.id===task.productId):null;
+            const type=m.type||m.markType||"—";
+            const typeClr=ATTENDANCE_TYPE_COLORS[type]||"info";
             return(
               <tr key={m.id} style={{borderBottom:`1px solid ${C.border}`}}>
-                <TD s={{fontSize:12,whiteSpace:"nowrap"}}>{fmtDate(m.createdAt)}</TD>
-                <TD s={{fontWeight:500}}>{emp?.name?.split(" ").slice(0,2).join(" ")||"\u2014"}</TD>
-                <TD><Badge color={mtColor(m.markType)}>{mtIcon(m.markType)} <span style={{marginLeft:4}}>{m.markType}</span></Badge></TD>
-                <TD s={{color:C.muted,fontSize:12}}>{task?`#${task.id} ${prod?.name||""} x${task.quantity}`:"\u2014"}</TD>
-                <TD s={{color:C.dim,fontSize:12}}>{author?.name?.split(" ").slice(0,2).join(" ")||"\u2014"}</TD>
-                <TD s={{color:C.muted,fontSize:12,maxWidth:200,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m.comment||"\u2014"}</TD>
-                {canEditDel&&<TD><div style={{display:"flex",gap:4}}>
-                  <Btn v="ghost" sz="sm" onClick={()=>openEdit(m)} icon={<I.edit size={13}/>}/>
-                  <Btn v="ghost" sz="sm" onClick={()=>del(m)} icon={<I.trash size={13}/>}/>
-                </div></TD>}
+                <TD s={{fontSize:12,whiteSpace:"nowrap",color:C.muted}}>{fmtTime(m.time||m.createdAt)}</TD>
+                <TD s={{fontWeight:500}}>{emp?.name?.split(" ").slice(0,2).join(" ")||"—"}</TD>
+                <TD><Badge color={typeClr}>{type}</Badge></TD>
+                <TD s={{fontSize:12,color:C.muted}}>{m.reason||"—"}</TD>
+                <TD s={{fontSize:12,color:C.dim,maxWidth:180}}>{m.comment||"—"}</TD>
+                {canManage&&<TD><Btn v="ghost" sz="sm" onClick={()=>delMark(m)} icon={<I.trash size={13}/>}/></TD>}
               </tr>
             );
-          })}</tbody>
-        </table></div></Card>
-      {visible.length===0&&<div style={{textAlign:"center",padding:50,color:C.dim}}><I.clip size={36}/><p style={{marginTop:10}}>Нет отметок</p></div>}
+          })}
+          {dateMarks.length===0&&<tr><td colSpan={6} style={{textAlign:"center",padding:40,color:C.dim,fontSize:13}}>Нет отметок за {fmtShort(fDate)}</td></tr>}
+          </tbody>
+        </table>
+      </div></Card>
 
-      <Modal open={modal} onClose={()=>setModal(false)} title={edit?"Редактировать отметку":"Новая отметка"}>
-        <Sel label="Сотрудник" value={form.employeeId} onChange={e=>setForm({...form,employeeId:e.target.value})} error={errs.employeeId} options={[{value:"",label:"Выберите"},...workers.map(w=>({value:w.id,label:w.name}))]}/>
-        <Sel label="Тип отметки" value={form.markType} onChange={e=>setForm({...form,markType:e.target.value})} options={MARK_TYPES.map(t=>({value:t,label:t}))}/>
-        {form.markType==="выполненный заказ"&&(
-          <Sel label="Связанный заказ" value={form.relatedTaskId} onChange={e=>setForm({...form,relatedTaskId:e.target.value})} options={[{value:"",label:"Без привязки"},...completedTasks.filter(t=>(t.userIds||[]).includes(+form.employeeId)).map(t=>{const p=products.find(x=>x.id===t.productId);return{value:t.id,label:`#${t.id} ${p?.name||""} x${t.quantity}`}})]}/>
-        )}
+      <Modal open={modal} onClose={()=>setModal(false)} title="Добавить отметку" width={440}>
+        <Sel label="Сотрудник" value={form.employeeId} onChange={e=>setForm({...form,employeeId:e.target.value})} error={errs.employeeId} options={[{value:"",label:"Выберите"},...workers.map(w=>({value:w.id,label:w.name.split(" ").slice(0,2).join(" ")}))]}/>
+        <Sel label="Событие" value={form.type} onChange={e=>setForm({...form,type:e.target.value})} options={ATTENDANCE_TYPES.map(t=>({value:t,label:t}))}/>
+        <Inp label="Время (факт)" type="datetime-local" value={form.time} onChange={e=>setForm({...form,time:e.target.value})}/>
+        {(form.type==="опоздание"||form.type==="отсутствие")&&<Inp label="Причина" value={form.reason} onChange={e=>setForm({...form,reason:e.target.value})} placeholder="Болезнь, семейные обстоятельства..."/>}
         <Txa label="Комментарий" value={form.comment} onChange={e=>setForm({...form,comment:e.target.value})}/>
-        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:6}}><Btn v="secondary" onClick={()=>setModal(false)}>Отмена</Btn><Btn onClick={save}>{edit?"Сохранить":"Создать"}</Btn></div>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:6}}><Btn v="secondary" onClick={()=>setModal(false)}>Отмена</Btn><Btn onClick={saveModal}>Добавить</Btn></div>
       </Modal>
       {confirm&&<Confirm open onClose={()=>setConfirm(null)} {...confirm}/>}
       {toast&&<Toast {...toast} onClose={()=>setToast(null)}/>}
@@ -2321,10 +2683,12 @@ const WorkerHistoryPage = ()=>{
 };
 
 // ═══════════════════════════════════════════════════════════════
-// CLIENTS & ORDERS
+// STORES & ORDERS (бывший Clients)
 // ═══════════════════════════════════════════════════════════════
 const ClientsPage = ()=>{
-  const {clients,setClients,clientOrders,setClientOrders,products,setProducts,addLog,currentUser,users,sales,inventoryMovements,setInventoryMovements,addNotification}=useContext(AppContext);
+  const {clients,setClients,clientOrders,setClientOrders,products,setProducts,addLog,currentUser,users,sales,inventoryMovements,setInventoryMovements,addNotification,debts}=useContext(AppContext);
+  const role=ROLES.find(r=>r.id===currentUser.roleId);
+  const isAdmin=role?.name==="admin"||role?.name==="owner";
   const [tab,setTab]=useState("clients");
   const [modal,setModal]=useState(false);
   const [orderModal,setOrderModal]=useState(false);
@@ -2332,16 +2696,17 @@ const ClientsPage = ()=>{
   const [errs,setErrs]=useState({});
   const [selectedClient,setSelectedClient]=useState(null);
   const [historyOrder,setHistoryOrder]=useState(null);
-  const [form,setForm]=useState({name:"",contact:"",phone:"",email:"",address:"",comment:""});
+  const [editStore,setEditStore]=useState(null);
+  const emptyStore={name:"",phone:"",whatsapp:"",address:"",contact:"",comment:"",status:"active",blockReason:""};
+  const [form,setForm]=useState(emptyStore);
   const ap=products.filter(p=>!p.deleted);
-  const [orderForm,setOrderForm]=useState({clientId:"",items:[{productId:ap[0]?.id||"",qty:""}],note:""});
-  const role=ROLES.find(r=>r.id===currentUser.roleId);
+  const [orderForm,setOrderForm]=useState({clientId:"",items:[{productId:ap[0]?.id||"",qty:""}],note:"",source:"WhatsApp",priority:"нормальный"});
 
-  // Calculate reserved quantities (orders in non-final status)
+  // Calculate reserved quantities — ALL active statuses including "сборка"
   const reserved=useMemo(()=>{
     const m={};
-    clientOrders.filter(o=>o.status==="новый"||o.status==="в производстве"||o.status==="готов").forEach(o=>{
-      o.items.forEach(it=>{m[it.productId]=(m[it.productId]||0)+it.qty});
+    clientOrders.filter(o=>!["отгружен","отменён"].includes(o.status)).forEach(o=>{
+      (o.items||[]).forEach(it=>{m[it.productId]=(m[it.productId]||0)+it.qty});
     });
     return m;
   },[clientOrders]);
@@ -2351,24 +2716,34 @@ const ClientsPage = ()=>{
     return (p?.stock||0)-(reserved[productId]||0);
   };
 
-  const openNewClient=()=>{setForm({name:"",contact:"",phone:"",email:"",address:"",comment:""});setErrs({});setModal(true)};
+  const openNewClient=()=>{setEditStore(null);setForm(emptyStore);setErrs({});setModal(true)};
+  const openEditStore=(c)=>{setEditStore(c);setForm({name:c.name,phone:c.phone||"",whatsapp:c.whatsapp||"",address:c.address||"",contact:c.contact||"",comment:c.comment||"",status:c.status||"active",blockReason:c.blockReason||""});setErrs({});setModal(true)};
   const saveClient=()=>{
     if(!form.name.trim()){setErrs({name:"!"});return}
-    setClients(p=>[...p,{id:Date.now(),name:form.name,contact:form.contact,phone:form.phone,email:form.email,address:form.address,comment:form.comment,createdAt:new Date().toISOString()}]);
-    addLog(`Клиент: ${form.name}`);setToast({message:"Клиент добавлен",type:"success"});setModal(false);
+    if(editStore){
+      setClients(p=>p.map(c=>c.id===editStore.id?{...c,...form}:c));
+      addLog(`Магазин обновлён: ${form.name}`);setToast({message:"Магазин обновлён",type:"success"});
+    } else {
+      setClients(p=>[...p,{id:Date.now(),name:form.name,phone:form.phone,whatsapp:form.whatsapp,address:form.address,contact:form.contact,comment:form.comment,status:form.status||"active",blockReason:form.blockReason||"",createdAt:new Date().toISOString()}]);
+      addLog(`Магазин добавлен: ${form.name}`);setToast({message:"Магазин добавлен",type:"success"});
+    }
+    setModal(false);
   };
 
   const addOrderItem=()=>setOrderForm(f=>({...f,items:[...f.items,{productId:ap[0]?.id||"",qty:""}]}));
   const removeOrderItem=(i)=>setOrderForm(f=>({...f,items:f.items.filter((_,idx)=>idx!==i)}));
   const updateOrderItem=(i,field,val)=>setOrderForm(f=>({...f,items:f.items.map((it,idx)=>idx===i?{...it,[field]:val}:it)}));
 
-  const openNewOrder=()=>{setOrderForm({clientId:clients[0]?.id||"",items:[{productId:ap[0]?.id||"",qty:""}],note:"",priority:"нормальный"});setErrs({});setOrderModal(true)};
+  const openNewOrder=()=>{setOrderForm({clientId:clients.filter(c=>c.status!=="blacklist")[0]?.id||"",items:[{productId:ap[0]?.id||"",qty:""}],note:"",source:"WhatsApp",priority:"нормальный"});setErrs({});setOrderModal(true)};
 
   const saveOrder=()=>{
     if(!orderForm.clientId){setErrs({clientId:"!"});return}
+    const store=clients.find(c=>c.id===+orderForm.clientId);
+    // Block blacklisted stores (unless admin/owner overrides)
+    if(store?.status==="blacklist"&&!isAdmin){setToast({message:`${store.name} в чёрном списке — заказ запрещён`,type:"error"});return}
+    if(store?.status==="blocked"&&!isAdmin){setToast({message:`${store.name} заблокирован`,type:"error"});return}
     const validItems=orderForm.items.filter(it=>it.productId&&it.qty&&+it.qty>0);
     if(!validItems.length){setToast({message:"Добавьте товары",type:"error"});return}
-    // Check stock
     for(const it of validItems){
       const avail=getAvailable(+it.productId);
       const pName=products.find(p=>p.id===+it.productId)?.name;
@@ -2376,9 +2751,12 @@ const ClientsPage = ()=>{
     }
     const total=validItems.reduce((s,it)=>{const p=products.find(x=>x.id===+it.productId);return s+(p?p.sellPrice*+it.qty:0)},0);
     const now=new Date().toISOString();
-    setClientOrders(p=>[...p,{id:Date.now(),clientId:+orderForm.clientId,items:validItems.map(it=>({productId:+it.productId,qty:+it.qty})),orderDate:now,status:"новый",total,note:orderForm.note,priority:orderForm.priority||"нормальный",statusChangedAt:now,shippedAt:null,shippedBy:null,history:[{from:null,to:"новый",userId:currentUser.id,userName:currentUser.name,at:now}]}]);
-    addLog(`Заказ: ${clients.find(c=>c.id===+orderForm.clientId)?.name} — ${total.toLocaleString("ru")} ₽`);
-    setToast({message:"Заказ создан (товар зарезервирован)",type:"success"});setOrderModal(false);
+    // Snapshot address at time of order
+    const addressSnapshot=store?.address||"";
+    const itemsSnapshot=validItems.map(it=>({productId:+it.productId,qty:+it.qty,productName:products.find(p=>p.id===+it.productId)?.name||"?",unit:products.find(p=>p.id===+it.productId)?.unit||""}));
+    setClientOrders(p=>[...p,{id:Date.now(),clientId:+orderForm.clientId,items:itemsSnapshot,orderDate:now,status:"новый",total,note:orderForm.note,source:orderForm.source||"вручную",priority:orderForm.priority||"нормальный",addressSnapshot,statusChangedAt:now,shippedAt:null,shippedBy:null,history:[{from:null,to:"новый",userId:currentUser.id,userName:currentUser.name,at:now}]}]);
+    addLog(`Заказ от ${store?.name} — ${total.toLocaleString("ru")} ₽ (${orderForm.source})`);
+    setToast({message:"Заказ создан — товар зарезервирован",type:"success"});setOrderModal(false);
   };
 
   const updateOrderStatus=(order,newStatus)=>{
@@ -2416,43 +2794,62 @@ const ClientsPage = ()=>{
 
   const clientStats=clients.map(c=>{
     const orders=clientOrders.filter(o=>o.clientId===c.id);
-    return{...c,orderCount:orders.length,totalSpent:orders.reduce((s,o)=>s+o.total,0)};
+    const storeDebts=(debts||[]).filter(d=>d.storeId===c.id&&d.status!=="погашен");
+    const totalDebt=storeDebts.reduce((s,d)=>s+d.remaining,0);
+    return{...c,orderCount:orders.length,totalSpent:orders.reduce((s,o)=>s+o.total,0),totalDebt,activeOrders:orders.filter(o=>!["отгружен","отменён"].includes(o.status)).length};
   });
 
   const stIco=(s)=>s==="отгружен"?"success":s==="отменён"?"danger":s==="готов"?"purple":"info";
+  const statusColor=(s)=>s==="blacklist"?"danger":s==="blocked"?"orange":"success";
+  const statusLabel=(s)=>STORE_STATUS_LABELS[s]||s;
 
   return(
     <div>
-      <PageH title="Клиенты и заказы">
+      <PageH title="Магазины и заказы">
         <div style={{display:"flex",gap:5,alignItems:"center"}}>
-          {[["clients","Клиенты"],["orders","Заказы"]].map(([id,lb])=>(
+          {[["clients","Магазины"],["orders","Заказы"]].map(([id,lb])=>(
             <button key={id} onClick={()=>setTab(id)} style={{padding:"6px 14px",borderRadius:7,border:`1px solid ${tab===id?C.primary:C.border}`,background:tab===id?C.primaryBg:C.surface,color:tab===id?C.primary:C.muted,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"}}>{lb}</button>
           ))}
           <button onClick={()=>window.open(window.location.href.split("?")[0]+"?board=1","_blank")} style={{padding:"6px 14px",borderRadius:7,border:`1px solid ${C.border}`,background:C.surface,color:C.muted,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit",display:"flex",alignItems:"center",gap:5}}>⬡ Панель</button>
         </div>
-        {tab==="clients"&&<Btn onClick={openNewClient} icon={<I.plus size={15}/>}>Новый клиент</Btn>}
+        {tab==="clients"&&<Btn onClick={openNewClient} icon={<I.plus size={15}/>}>Новый магазин</Btn>}
         {tab==="orders"&&<Btn onClick={openNewOrder} icon={<I.plus size={15}/>}>Новый заказ</Btn>}
       </PageH>
 
       {tab==="clients"&&(
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",gap:12}}>
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(310px,1fr))",gap:12}}>
           {clientStats.map(c=>(
-            <Card key={c.id} s={{cursor:"pointer"}} onClick={()=>setSelectedClient(selectedClient===c.id?null:c.id)}>
-              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6}}>
-                <div style={{fontSize:15,fontWeight:700,color:C.text}}>{c.name}</div>
-                <Badge color="info">{c.orderCount} зак.</Badge>
+            <Card key={c.id} s={{cursor:"pointer",borderLeft:`3px solid ${C[statusColor(c.status||"active")]}`}} onClick={()=>setSelectedClient(selectedClient===c.id?null:c.id)}>
+              <div style={{display:"flex",justifyContent:"space-between",marginBottom:6,alignItems:"flex-start"}}>
+                <div>
+                  <div style={{fontSize:15,fontWeight:700,color:C.text}}>{c.name}</div>
+                  {c.status&&c.status!=="active"&&<Badge color={statusColor(c.status)} s={{fontSize:10,marginTop:2}}>{statusLabel(c.status)}</Badge>}
+                </div>
+                <div style={{display:"flex",gap:5,flexShrink:0}}>
+                  <Badge color="info" s={{fontSize:10}}>{c.activeOrders} акт.</Badge>
+                  {c.totalDebt>0&&<Badge color="danger" s={{fontSize:10}}>{(c.totalDebt/1000).toFixed(0)}т₽ долг</Badge>}
+                </div>
               </div>
-              <div style={{fontSize:12,color:C.muted}}>{c.contact} · {c.phone}</div>
-              {c.address&&<div style={{fontSize:11,color:C.dim}}>{c.address}</div>}
-              <div style={{marginTop:8}}><Badge color="success">{c.totalSpent.toLocaleString("ru")} ₽</Badge></div>
+              {c.phone&&<div style={{fontSize:12,color:C.muted,display:"flex",gap:10}}><span>📞 {c.phone}</span>{c.whatsapp&&<span>💬 {c.whatsapp}</span>}</div>}
+              {c.address&&<div style={{fontSize:11,color:C.dim,marginTop:2}}>📍 {c.address}</div>}
+              {c.status==="blacklist"&&c.blockReason&&<div style={{fontSize:11,color:C.danger,marginTop:4,fontStyle:"italic"}}>Причина: {c.blockReason}</div>}
+              <div style={{marginTop:8,display:"flex",gap:6,flexWrap:"wrap"}}>
+                <Badge color="success" s={{fontSize:10}}>{c.totalSpent.toLocaleString("ru")} ₽ всего</Badge>
+                {c.orderCount>0&&<Badge color="primary" s={{fontSize:10}}>{c.orderCount} заказов</Badge>}
+              </div>
+              <div style={{marginTop:8,display:"flex",gap:6}}>
+                <button onClick={e=>{e.stopPropagation();openEditStore(c)}} style={{fontSize:11,color:C.primary,background:"none",border:`1px solid ${C.primary}30`,borderRadius:5,padding:"3px 10px",cursor:"pointer",fontFamily:"inherit"}}>Изменить</button>
+                {isAdmin&&c.status!=="blacklist"&&<button onClick={e=>{e.stopPropagation();setClients(p=>p.map(x=>x.id===c.id?{...x,status:"blacklist",blockReason:"заблокирован вручную"}:x));addLog(`Чёрный список: ${c.name}`)}} style={{fontSize:11,color:C.danger,background:"none",border:`1px solid ${C.danger}30`,borderRadius:5,padding:"3px 10px",cursor:"pointer",fontFamily:"inherit"}}>В ЧС</button>}
+                {isAdmin&&c.status!=="active"&&<button onClick={e=>{e.stopPropagation();setClients(p=>p.map(x=>x.id===c.id?{...x,status:"active",blockReason:""}:x));addLog(`Разблок.: ${c.name}`)}} style={{fontSize:11,color:C.success,background:"none",border:`1px solid ${C.success}30`,borderRadius:5,padding:"3px 10px",cursor:"pointer",fontFamily:"inherit"}}>Разблокировать</button>}
+              </div>
               {selectedClient===c.id&&(
                 <div style={{marginTop:12,borderTop:`1px solid ${C.border}`,paddingTop:10}}>
-                  <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:6}}>История заказов:</div>
-                  {clientOrders.filter(o=>o.clientId===c.id).sort((a,b)=>new Date(b.orderDate)-new Date(a.orderDate)).map(o=>(
+                  <div style={{fontSize:12,fontWeight:600,color:C.text,marginBottom:6}}>Последние заказы:</div>
+                  {clientOrders.filter(o=>o.clientId===c.id).sort((a,b)=>new Date(b.orderDate)-new Date(a.orderDate)).slice(0,5).map(o=>(
                     <div key={o.id} style={{padding:"6px 0",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
                       <div>
-                        <div style={{fontSize:12,color:C.text}}>{o.items.map(it=>{const p=products.find(x=>x.id===it.productId);return`${p?.name||"?"} x${it.qty}`}).join(", ")}</div>
-                        <div style={{fontSize:10,color:C.dim}}>{fmtShort(o.orderDate)} {o.shippedAt?`· Отгружен: ${fmtShort(o.shippedAt)}`:""}</div>
+                        <div style={{fontSize:12,color:C.text}}>{(o.items||[]).map(it=>it.productName?`${it.productName} x${it.qty}`:`? x${it.qty}`).join(", ")}</div>
+                        <div style={{fontSize:10,color:C.dim}}>{fmtShort(o.orderDate)} {o.source?`· ${o.source}`:""} {o.shippedAt?`· Отгружен: ${fmtShort(o.shippedAt)}`:""}</div>
                       </div>
                       <Badge color={stIco(o.status)} s={{fontSize:10}}>{o.status}</Badge>
                     </div>
@@ -2461,25 +2858,33 @@ const ClientsPage = ()=>{
               )}
             </Card>
           ))}
+          {clients.length===0&&<div style={{gridColumn:"1/-1",textAlign:"center",padding:50,color:C.dim}}>Нет магазинов. Добавьте первый.</div>}
         </div>
       )}
 
       {tab==="orders"&&(
         <Card s={{padding:0,overflow:"hidden"}}><div style={{overflowX:"auto"}}>
           <table style={{width:"100%",borderCollapse:"collapse"}}>
-            <thead><tr><TH>#</TH><TH>Дата</TH><TH>Клиент</TH><TH>Товары</TH><TH>Сумма</TH><TH>Статус</TH><TH>Отгрузка</TH><TH></TH><TH></TH></tr></thead>
-            <tbody>{[...clientOrders].sort((a,b)=>new Date(b.orderDate)-new Date(a.orderDate)).map(o=>{
+            <thead><tr><TH>#</TH><TH>Дата</TH><TH>Магазин</TH><TH>Товары</TH><TH>Сумма</TH><TH>Источник</TH><TH>Статус</TH><TH>Отгрузка</TH><TH></TH></tr></thead>
+            <tbody>{[...clientOrders].sort((a,b)=>{const p={срочный:0,важный:1,нормальный:2};const pd=(p[a.priority]??2)-(p[b.priority]??2);return pd!==0?pd:new Date(b.orderDate)-new Date(a.orderDate)}).map(o=>{
               const cl=clients.find(c=>c.id===o.clientId);
               const shipper=o.shippedBy?users.find(u=>u.id===o.shippedBy):null;
+              const rowBg=o.priority==="срочный"&&!["отгружен","отменён"].includes(o.status)?`${C.danger}08`:o.priority==="важный"&&!["отгружен","отменён"].includes(o.status)?`${C.orange}06`:"transparent";
               return(
-                <tr key={o.id} style={{borderBottom:`1px solid ${C.border}`}}>
+                <tr key={o.id} style={{borderBottom:`1px solid ${C.border}`,background:rowBg}}>
                   <TD s={{fontWeight:600,color:C.dim}}>#{o.id}</TD>
                   <TD s={{fontSize:12,whiteSpace:"nowrap"}}>{fmtShort(o.orderDate)}</TD>
-                  <TD s={{fontWeight:500}}>{cl?.name||"—"}</TD>
-                  <TD s={{fontSize:12}}>{o.items.map(it=>{const p=products.find(x=>x.id===it.productId);return`${p?.name||"?"} x${it.qty}`}).join(", ")}</TD>
-                  <TD s={{fontWeight:700,color:C.primary}}>{o.total.toLocaleString("ru")} ₽</TD>
+                  <TD s={{fontWeight:500}}>
+                    {cl?.name||"—"}
+                    {o.priority==="срочный"&&<span style={{marginLeft:5,fontSize:9,fontWeight:700,color:C.danger,background:`${C.danger}15`,padding:"1px 5px",borderRadius:3}}>СРОЧНО</span>}
+                    {o.priority==="важный"&&<span style={{marginLeft:5,fontSize:9,fontWeight:700,color:C.orange,background:`${C.orange}15`,padding:"1px 5px",borderRadius:3}}>ВАЖНО</span>}
+                    {o.addressSnapshot&&<div style={{fontSize:10,color:C.dim}}>📍 {o.addressSnapshot}</div>}
+                  </TD>
+                  <TD s={{fontSize:12}}>{(o.items||[]).map(it=>it.productName?`${it.productName} x${it.qty}`:(products.find(x=>x.id===it.productId)?.name||"?")+" x"+it.qty).join(", ")}</TD>
+                  <TD s={{fontWeight:700,color:C.primary}}>{(o.total||0).toLocaleString("ru")} ₽</TD>
+                  <TD s={{fontSize:11,color:C.muted}}>{o.source||"—"}</TD>
                   <TD>
-                    {o.status!=="отгружен"&&o.status!=="отменён"?
+                    {!["отгружен","отменён"].includes(o.status)?
                       <select value={o.status} onChange={e=>updateOrderStatus(o,e.target.value)} style={{padding:"4px 6px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:5,color:C.text,fontSize:11,fontFamily:"inherit"}}>
                         {ORDER_STATUSES.filter(s=>s!=="отгружен").map(s=><option key={s} value={s}>{s}</option>)}
                       </select>
@@ -2487,13 +2892,10 @@ const ClientsPage = ()=>{
                     }
                   </TD>
                   <TD s={{fontSize:11,color:C.dim}}>
-                    {o.shippedAt?<span>{fmtShort(o.shippedAt)}<br/>{shipper?.name?.split(" ").slice(0,2).join(" ")}</span>:"—"}
+                    {o.shippedAt?<span>{fmtShort(o.shippedAt)}<br/><span style={{color:C.dim}}>{shipper?.name?.split(" ")[0]}</span></span>:<span>{(o.status==="готов")&&<Btn sz="sm" v="success" onClick={()=>shipOrder(o)} icon={<I.truck size={12}/>}>Отгрузить</Btn>}</span>}
                   </TD>
                   <TD>
-                    {(o.status==="готов")&&<Btn sz="sm" v="success" onClick={()=>shipOrder(o)} icon={<I.truck size={13}/>}>Отгрузить</Btn>}
-                  </TD>
-                  <TD>
-                    {(o.history||[]).length>0&&<button onClick={()=>setHistoryOrder(o)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,padding:"2px 6px",borderRadius:4,textDecoration:"underline",fontFamily:"inherit"}} title="История изменений">История</button>}
+                    {(o.history||[]).length>0&&<button onClick={()=>setHistoryOrder(o)} style={{background:"none",border:"none",color:C.muted,cursor:"pointer",fontSize:11,padding:"2px 6px",borderRadius:4,textDecoration:"underline",fontFamily:"inherit"}}>История</button>}
                   </TD>
                 </tr>
               );
@@ -2502,25 +2904,29 @@ const ClientsPage = ()=>{
         </div></Card>
       )}
 
-      {/* New Client Modal */}
-      <Modal open={modal} onClose={()=>setModal(false)} title="Новый клиент" width={480}>
-        <Inp label="Название компании" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} error={errs.name}/>
+      {/* New/Edit Store Modal */}
+      <Modal open={modal} onClose={()=>setModal(false)} title={editStore?"Изменить магазин":"Новый магазин"} width={500}>
+        <Inp label="Название магазина" value={form.name} onChange={e=>setForm({...form,name:e.target.value})} error={errs.name}/>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 12px"}}>
-          <Inp label="Контактное лицо" value={form.contact} onChange={e=>setForm({...form,contact:e.target.value})}/>
           <Inp label="Телефон" value={form.phone} onChange={e=>setForm({...form,phone:e.target.value})}/>
-          <Inp label="Email" value={form.email} onChange={e=>setForm({...form,email:e.target.value})}/>
-          <Inp label="Адрес" value={form.address} onChange={e=>setForm({...form,address:e.target.value})}/>
+          <Inp label="WhatsApp" value={form.whatsapp} onChange={e=>setForm({...form,whatsapp:e.target.value})} placeholder="+7..."/>
+          <Inp label="Контактное лицо" value={form.contact} onChange={e=>setForm({...form,contact:e.target.value})}/>
+          <Inp label="Адрес доставки" value={form.address} onChange={e=>setForm({...form,address:e.target.value})}/>
         </div>
+        <Sel label="Статус" value={form.status} onChange={e=>setForm({...form,status:e.target.value})} options={STORE_STATUSES.map(s=>({value:s,label:STORE_STATUS_LABELS[s]}))}/>
+        {form.status!=="active"&&<Inp label="Причина блокировки" value={form.blockReason} onChange={e=>setForm({...form,blockReason:e.target.value})}/>}
         <Txa label="Комментарий" value={form.comment} onChange={e=>setForm({...form,comment:e.target.value})}/>
-        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:6}}><Btn v="secondary" onClick={()=>setModal(false)}>Отмена</Btn><Btn onClick={saveClient}>Добавить</Btn></div>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:6}}><Btn v="secondary" onClick={()=>setModal(false)}>Отмена</Btn><Btn onClick={saveClient}>{editStore?"Сохранить":"Добавить"}</Btn></div>
       </Modal>
 
-      {/* New Order Modal with stock check */}
+      {/* New Order Modal */}
       <Modal open={orderModal} onClose={()=>setOrderModal(false)} title="Новый заказ" width={560}>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 12px"}}>
-          <Sel label="Клиент" value={orderForm.clientId} onChange={e=>setOrderForm({...orderForm,clientId:e.target.value})} error={errs.clientId} options={[{value:"",label:"Выберите"},...clients.map(c=>({value:c.id,label:c.name}))]}/>
+          <Sel label="Магазин" value={orderForm.clientId} onChange={e=>setOrderForm({...orderForm,clientId:e.target.value})} error={errs.clientId} options={[{value:"",label:"Выберите"},...clients.map(c=>({value:c.id,label:`${c.name}${c.status!=="active"?" ⚠":""}`}))]}/>
           <Sel label="Приоритет" value={orderForm.priority||"нормальный"} onChange={e=>setOrderForm({...orderForm,priority:e.target.value})} options={ORDER_PRIORITIES.map(p=>({value:p,label:p}))}/>
+          <Sel label="Источник" value={orderForm.source||"WhatsApp"} onChange={e=>setOrderForm({...orderForm,source:e.target.value})} options={ORDER_SOURCES.map(s=>({value:s,label:s}))}/>
         </div>
+        {orderForm.clientId&&(()=>{const st=clients.find(c=>c.id===+orderForm.clientId);return st?.status==="blacklist"?<div style={{padding:"8px 12px",background:`${C.danger}15`,border:`1px solid ${C.danger}30`,borderRadius:7,fontSize:12,color:C.danger,marginBottom:8}}>⚠ Магазин в чёрном списке: {st.blockReason||"причина не указана"}</div>:st?.status==="blocked"?<div style={{padding:"8px 12px",background:`${C.orange}15`,border:`1px solid ${C.orange}30`,borderRadius:7,fontSize:12,color:C.orange,marginBottom:8}}>⚠ Магазин заблокирован</div>:null;})()}
         <div style={{marginBottom:12}}>
           <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
             <label style={{fontSize:12,fontWeight:500,color:C.muted}}>Товары</label>
@@ -3154,355 +3560,262 @@ const ProfitAnalyticsPage = ()=>{
 // LOGS
 // ═══════════════════════════════════════════════════════════════
 const LogsPage = ()=>{
-  const {logs}=useContext(AppContext);
+  const {logs,users}=useContext(AppContext);
   const [search,setSearch]=useState("");
-  const filtered=logs.filter(l=>l.message.toLowerCase().includes(search.toLowerCase())||l.userName.toLowerCase().includes(search.toLowerCase())).sort((a,b)=>new Date(b.date)-new Date(a.date));
+  const [fUser,setFUser]=useState("all");
+  const workers=users.filter(u=>u.status==="active");
+  const filtered=logs.filter(l=>{
+    const matchSearch=!search||l.message.toLowerCase().includes(search.toLowerCase())||l.userName.toLowerCase().includes(search.toLowerCase());
+    const matchUser=fUser==="all"||l.userId===+fUser;
+    return matchSearch&&matchUser;
+  }).sort((a,b)=>new Date(b.date)-new Date(a.date));
+
+  // Group by day
+  const groups=[];
+  let lastDay="";
+  for(const l of filtered){
+    const day=l.date?l.date.slice(0,10):"";
+    if(day!==lastDay){groups.push({day,items:[]});lastDay=day;}
+    groups[groups.length-1].items.push(l);
+  }
+
+  const dayLabel=d=>{
+    const today=new Date().toISOString().slice(0,10);
+    const yest=new Date(Date.now()-86400000).toISOString().slice(0,10);
+    if(d===today) return"Сегодня";
+    if(d===yest) return"Вчера";
+    return fmtShort(d+"T00:00:00");
+  };
+
+  const timeOf=iso=>{
+    try{return new Date(iso).toLocaleTimeString("ru",{hour:"2-digit",minute:"2-digit"});}catch{return"";}
+  };
+
   return(
     <div>
-      <PageH title="Журнал действий"><SearchBox value={search} onChange={e=>setSearch(e.target.value)} ph="Поиск в логах..."/></PageH>
-      <Card s={{maxHeight:600,overflow:"auto"}}>
-        {filtered.length===0?<div style={{textAlign:"center",padding:50,color:C.dim}}>Нет записей</div>:
-        filtered.map((l,i)=>(
-          <div key={l.id} style={{padding:"10px 0",borderBottom:i<filtered.length-1?`1px solid ${C.border}`:"none",display:"flex",alignItems:"center",gap:12}}>
-            <div style={{width:32,height:32,borderRadius:8,background:C.primaryBg,color:C.primary,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}><I.clock size={14}/></div>
-            <div style={{flex:1}}><div style={{fontSize:13,color:C.text}}>{l.message}</div><div style={{fontSize:11,color:C.dim}}>{l.userName} \u00b7 {fmtDate(l.date)}</div></div>
-          </div>
-        ))}
-      </Card>
+      <PageH title="Журнал">
+        <SearchBox value={search} onChange={e=>setSearch(e.target.value)} ph="Что искать..."/>
+        <select value={fUser} onChange={e=>setFUser(e.target.value)} style={{padding:"7px 9px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,fontSize:12,fontFamily:"inherit"}}>
+          <option value="all">Все</option>
+          {workers.map(u=><option key={u.id} value={u.id}>{u.name.split(" ")[0]}</option>)}
+        </select>
+      </PageH>
+      {filtered.length===0&&<div style={{textAlign:"center",padding:50,color:C.dim}}>Нет записей</div>}
+      {groups.map(g=>(
+        <div key={g.day} style={{marginBottom:16}}>
+          <div style={{fontSize:11,fontWeight:700,color:C.dim,textTransform:"uppercase",letterSpacing:1,marginBottom:6,paddingLeft:4}}>{dayLabel(g.day)}</div>
+          <Card s={{padding:0}}>
+            {g.items.map((l,i)=>(
+              <div key={l.id} style={{padding:"9px 14px",borderBottom:i<g.items.length-1?`1px solid ${C.border}`:"none",display:"flex",alignItems:"center",gap:12}}>
+                <div style={{fontSize:11,color:C.dim,minWidth:38,textAlign:"right",flexShrink:0}}>{timeOf(l.date)}</div>
+                <div style={{flex:1,fontSize:13,color:C.text}}>{l.message}</div>
+                <div style={{fontSize:11,color:C.muted,flexShrink:0}}>{l.userName?.split(" ")[0]||"—"}</div>
+              </div>
+            ))}
+          </Card>
+        </div>
+      ))}
     </div>
   );
 };
 
 // ═══════════════════════════════════════════════════════════════
-// DEBTS PAGE
+// ═══════════════════════════════════════════════════════════════
+// DEBTS PAGE — Долги магазинов
 // ═══════════════════════════════════════════════════════════════
 const DebtsPage = ()=>{
-  const {debts,setDebts,users,currentUser,addLog}=useContext(AppContext);
+  const {debts,setDebts,clients,setClients,currentUser,addLog}=useContext(AppContext);
   const role=ROLES.find(r=>r.id===currentUser.roleId);
-  const isOwner=role?.name==="owner";
-
-  // ── State ──
-  const [tab,setTab]=useState(isOwner?"all":"my"); // "my" | "all" (owner only)
+  const isAdmin=role?.name==="admin"||role?.name==="owner";
   const [modal,setModal]=useState(false);
-  const [payModal,setPayModal]=useState(null); // debt object for partial payment
+  const [payModal,setPayModal]=useState(null);
   const [edit,setEdit]=useState(null);
   const [confirm,setConfirm]=useState(null);
   const [toast,setToast]=useState(null);
   const [search,setSearch]=useState("");
   const [fStatus,setFStatus]=useState("all");
-  const [fUser,setFUser]=useState("all");
+  const [fStore,setFStore]=useState("all");
   const [errs,setErrs]=useState({});
   const [payErrs,setPayErrs]=useState({});
 
-  const emptyForm={
-    amount:"", description:"", date:new Date().toISOString().slice(0,10),
-    dueDate:"", status:"активен", comment:""
-  };
+  const emptyForm={storeId:"",amount:"",description:"",date:new Date().toISOString().slice(0,10),dueDate:"",comment:""};
   const [form,setForm]=useState(emptyForm);
   const [payForm,setPayForm]=useState({amount:"",date:new Date().toISOString().slice(0,10),note:""});
 
-  // Debts the current user is allowed to see
-  const myDebts=useMemo(()=>
-    (debts||[]).filter(d=>d.userId===currentUser.id).sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt))
-  ,[debts,currentUser]);
-
-  const allDebts=useMemo(()=>{
+  const filtered=useMemo(()=>{
     let l=[...(debts||[])];
-    if(fUser!=="all") l=l.filter(d=>d.userId===+fUser);
+    if(fStore!=="all") l=l.filter(d=>d.storeId===+fStore);
     if(fStatus!=="all") l=l.filter(d=>d.status===fStatus);
-    if(search){
-      const s=search.toLowerCase();
-      l=l.filter(d=>{
-        const u=users.find(x=>x.id===d.userId);
-        return d.description.toLowerCase().includes(s)||u?.name.toLowerCase().includes(s)||d.comment?.toLowerCase().includes(s);
-      });
-    }
+    if(search){const s=search.toLowerCase();l=l.filter(d=>{const st=clients.find(c=>c.id===d.storeId);return d.description?.toLowerCase().includes(s)||st?.name.toLowerCase().includes(s)||d.comment?.toLowerCase().includes(s);})}
     return l.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
-  },[debts,fUser,fStatus,search,users]);
-
-  // Owner summary
-  const ownerSummary=useMemo(()=>{
-    const byUser={};
-    (debts||[]).filter(d=>d.status!=="погашен").forEach(d=>{
-      if(!byUser[d.userId]) byUser[d.userId]={userId:d.userId,active:0,count:0};
-      byUser[d.userId].active+=d.remaining;
-      byUser[d.userId].count++;
-    });
-    return Object.values(byUser).sort((a,b)=>b.active-a.active);
-  },[debts]);
+  },[debts,fStore,fStatus,search,clients]);
 
   const totalActive=(debts||[]).filter(d=>d.status!=="погашен").reduce((s,d)=>s+d.remaining,0);
 
-  // ── CRUD ──
-  const validate=()=>{
-    const e={};
-    if(!form.amount||+form.amount<=0) e.amount="Укажите сумму > 0";
-    if(!form.description.trim()) e.description="Обязательное поле";
-    if(!form.date) e.date="!";
-    setErrs(e);return!Object.keys(e).length;
-  };
+  const storeSummary=useMemo(()=>{
+    const m={};
+    (debts||[]).filter(d=>d.status!=="погашен").forEach(d=>{
+      if(!m[d.storeId]) m[d.storeId]={storeId:d.storeId,active:0,count:0};
+      m[d.storeId].active+=d.remaining; m[d.storeId].count++;
+    });
+    return Object.values(m).sort((a,b)=>b.active-a.active);
+  },[debts]);
 
-  const openNew=()=>{setEdit(null);setForm(emptyForm);setErrs({});setModal(true)};
-  const openEdit=d=>{
-    setEdit(d);
-    setForm({amount:d.amount,description:d.description,date:d.date,dueDate:d.dueDate||"",status:d.status,comment:d.comment||""});
-    setErrs({});setModal(true);
-  };
+  const validate=()=>{const e={};if(!form.storeId)e.storeId="!";if(!form.amount||+form.amount<=0)e.amount="> 0";if(!form.description?.trim())e.description="!";setErrs(e);return!Object.keys(e).length};
 
   const save=()=>{
     if(!validate()) return;
     const now=new Date().toISOString();
+    const st=clients.find(c=>c.id===+form.storeId);
     if(edit){
-      setDebts(p=>(p||[]).map(d=>d.id===edit.id?{
-        ...d,
-        amount:+form.amount,
-        remaining:d.remaining+(+form.amount-d.amount), // adjust remaining by delta
-        description:form.description,
-        date:form.date,
-        dueDate:form.dueDate||null,
-        status:form.status,
-        comment:form.comment,
-        updatedAt:now,
-      }:d));
-      addLog(`Долг обновлён: ${form.description}`);
-      setToast({message:"Обновлено",type:"success"});
+      setDebts(p=>(p||[]).map(d=>d.id===edit.id?{...d,storeId:+form.storeId,amount:+form.amount,remaining:d.remaining+(+form.amount-d.amount),description:form.description,date:form.date,dueDate:form.dueDate||null,comment:form.comment,updatedAt:now}:d));
+      addLog("Долг обновлён: "+form.description);setToast({message:"Обновлено",type:"success"});
     } else {
-      const id=Date.now();
-      setDebts(p=>[...(p||[]),{
-        id,userId:currentUser.id,amount:+form.amount,remaining:+form.amount,
-        description:form.description,date:form.date,dueDate:form.dueDate||null,
-        status:"активен",comment:form.comment,payments:[],createdAt:now,
-      }]);
-      addLog(`Долг добавлен: ${form.description} ${form.amount}₽`);
-      setToast({message:"Долг записан",type:"success"});
+      setDebts(p=>[...(p||[]),{id:Date.now(),storeId:+form.storeId,amount:+form.amount,remaining:+form.amount,description:form.description,date:form.date,dueDate:form.dueDate||null,status:"активен",comment:form.comment,payments:[],createdAt:now}]);
+      addLog("Долг: "+(st?.name||"?")+" — "+form.amount+"₽");setToast({message:"Долг записан",type:"success"});
     }
     setModal(false);
   };
 
-  const doDelete=d=>{
-    setDebts(p=>(p||[]).filter(x=>x.id!==d.id));
-    addLog(`Долг удалён: ${d.description}`);
-    setToast({message:"Удалено",type:"error"});
-    setConfirm(null);
-  };
+  const doDelete=d=>{setDebts(p=>(p||[]).filter(x=>x.id!==d.id));addLog("Долг удалён: "+d.description);setToast({message:"Удалено",type:"error"});setConfirm(null)};
 
-  // ── Partial payment ──
-  const openPay=d=>{setPayModal(d);setPayForm({amount:"",date:new Date().toISOString().slice(0,10),note:""});setPayErrs({});};
+  const openPay=d=>{setPayModal(d);setPayForm({amount:"",date:new Date().toISOString().slice(0,10),note:""});setPayErrs({})};
   const savePay=()=>{
-    const e={};
-    if(!payForm.amount||+payForm.amount<=0) e.amount="Укажите сумму > 0";
-    if(+payForm.amount>payModal.remaining) e.amount=`Не больше остатка (${payModal.remaining}₽)`;
-    setPayErrs(e);if(Object.keys(e).length) return;
+    const e={};if(!payForm.amount||+payForm.amount<=0)e.amount="> 0";if(+payForm.amount>payModal.remaining)e.amount="Не больше "+payModal.remaining+"₽";
+    setPayErrs(e);if(Object.keys(e).length)return;
     const now=new Date().toISOString();
     setDebts(p=>(p||[]).map(d=>{
       if(d.id!==payModal.id) return d;
-      const newRemaining=+(d.remaining-+payForm.amount).toFixed(2);
-      const newStatus=newRemaining<=0?"погашен":newRemaining<d.amount?"частично погашен":"активен";
-      return{...d,remaining:newRemaining,status:newStatus,payments:[...(d.payments||[]),{id:Date.now(),amount:+payForm.amount,date:payForm.date,note:payForm.note}],updatedAt:now};
+      const nr=+(d.remaining-+payForm.amount).toFixed(2);
+      return{...d,remaining:nr,status:nr<=0?"погашен":nr<d.amount?"частично погашен":"активен",payments:[...(d.payments||[]),{id:Date.now(),amount:+payForm.amount,date:payForm.date,note:payForm.note}],updatedAt:now};
     }));
-    addLog(`Погашение долга: ${payModal.description} −${payForm.amount}₽`);
-    setToast({message:"Платёж записан",type:"success"});
-    setPayModal(null);
+    if(payModal.storeId) setClients(p=>p.map(c=>c.id===payModal.storeId?{...c,lastPaymentDate:now}:c));
+    const st=clients.find(c=>c.id===payModal.storeId);
+    addLog("Оплата: "+(st?.name||"?")+" "+payForm.amount+"₽");setToast({message:"Платёж принят",type:"success"});setPayModal(null);
   };
 
   const statusColor=s=>s==="погашен"?"success":s==="частично погашен"?"orange":"danger";
-  const dueBadge=d=>{
-    if(!d.dueDate||d.status==="погашен") return null;
-    const days=Math.ceil((new Date(d.dueDate)-new Date())/(1000*60*60*24));
-    if(days<0) return <Badge color="danger" s={{fontSize:10}}>Просрочен на {-days}д</Badge>;
-    if(days<=3) return <Badge color="orange" s={{fontSize:10}}>Срок через {days}д</Badge>;
-    return null;
-  };
-
-  const DebtCard=({d,canEdit:ce})=>{
-    const pct=d.amount>0?Math.round((1-d.remaining/d.amount)*100):100;
-    const owner=users.find(u=>u.id===d.userId);
-    return(
-      <Card s={{borderLeft:`3px solid ${C[statusColor(d.status)]}`}}>
-        <div style={{display:"flex",flexWrap:"wrap",gap:12,alignItems:"flex-start"}}>
-          {isOwner&&owner&&(
-            <div style={{display:"flex",alignItems:"center",gap:8,minWidth:130}}>
-              <div style={{width:32,height:32,borderRadius:8,background:`${C.primary}15`,color:C.primary,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:14}}>{owner.name.charAt(0)}</div>
-              <div style={{fontSize:12,fontWeight:600,color:C.text}}>{owner.name.split(" ").slice(0,2).join(" ")}</div>
-            </div>
-          )}
-          <div style={{flex:"1 1 180px"}}>
-            <div style={{fontSize:14,fontWeight:700,color:C.text}}>{d.description}</div>
-            <div style={{fontSize:11,color:C.dim,marginTop:2}}>Добавлен: {fmtShort(d.createdAt)}{d.dueDate&&` · Срок: ${fmtShort(d.dueDate)}`}</div>
-            {d.comment&&<div style={{fontSize:11,color:C.muted,marginTop:2,fontStyle:"italic"}}>{d.comment}</div>}
-          </div>
-          <div style={{textAlign:"right",minWidth:110}}>
-            <div style={{fontSize:20,fontWeight:800,color:d.status==="погашен"?C.success:C.danger}}>{d.remaining.toLocaleString("ru")}₽</div>
-            {d.remaining!==d.amount&&<div style={{fontSize:11,color:C.dim}}>из {d.amount.toLocaleString("ru")}₽</div>}
-            <Badge color={statusColor(d.status)} s={{marginTop:4,fontSize:10}}>{d.status}</Badge>
-            {dueBadge(d)&&<div style={{marginTop:4}}>{dueBadge(d)}</div>}
-          </div>
-          {ce&&(
-            <div style={{display:"flex",gap:4,flexDirection:"column"}}>
-              {d.status!=="погашен"&&<Btn sz="sm" v="success" onClick={()=>openPay(d)} icon={<I.check size={13}/>}>Погасить</Btn>}
-              <div style={{display:"flex",gap:4}}>
-                <Btn v="ghost" sz="sm" onClick={()=>openEdit(d)} icon={<I.edit size={13}/>}/>
-                <Btn v="ghost" sz="sm" onClick={()=>setConfirm({title:"Удалить долг?",message:`Удалить "${d.description}"?`,onConfirm:()=>doDelete(d)})} icon={<I.trash size={13}/>}/>
-              </div>
-            </div>
-          )}
-        </div>
-        {/* Progress bar */}
-        {d.amount>0&&d.status!=="активен"&&(
-          <div style={{marginTop:10}}>
-            <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:C.dim,marginBottom:2}}>
-              <span>Погашено: {pct}%</span><span>Остаток: {d.remaining.toLocaleString("ru")}₽</span>
-            </div>
-            <div style={{height:4,background:C.bg,borderRadius:2,overflow:"hidden"}}>
-              <div style={{height:"100%",width:`${pct}%`,background:C.success,borderRadius:2,transition:"width .4s"}}/>
-            </div>
-          </div>
-        )}
-        {/* Payment history */}
-        {(d.payments||[]).length>0&&(
-          <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${C.border}`}}>
-            <div style={{fontSize:11,color:C.dim,marginBottom:4}}>История погашений:</div>
-            <div style={{display:"flex",flexWrap:"wrap",gap:6}}>
-              {(d.payments||[]).map(p=>(
-                <div key={p.id} style={{padding:"3px 9px",background:C.successBg,borderRadius:6,border:`1px solid ${C.success}20`,fontSize:11}}>
-                  <span style={{fontWeight:700,color:C.success}}>−{p.amount.toLocaleString("ru")}₽</span>
-                  <span style={{color:C.dim,marginLeft:5}}>{fmtShort(p.date)}{p.note&&` · ${p.note}`}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </Card>
-    );
-  };
-
-  const tabStyle=active=>({padding:"7px 16px",borderRadius:7,border:`1px solid ${active?C.primary:C.border}`,background:active?C.primaryBg:C.surface,color:active?C.primary:C.muted,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"});
 
   return(
     <div>
-      <PageH title={isOwner?"Долги сотрудников":"Мои долги"}>
-        {isOwner&&(
-          <div style={{display:"flex",gap:5}}>
-            <button onClick={()=>setTab("all")} style={tabStyle(tab==="all")}>Все долги</button>
-            <button onClick={()=>setTab("my")} style={tabStyle(tab==="my")}>Мои долги</button>
-          </div>
-        )}
-        {tab==="my"&&<Btn onClick={openNew} icon={<I.plus size={15}/>}>Добавить долг</Btn>}
+      <PageH title="Долги магазинов">
+        <SearchBox value={search} onChange={e=>setSearch(e.target.value)} ph="Поиск..."/>
+        <select value={fStore} onChange={e=>setFStore(e.target.value)} style={{padding:"7px 9px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,fontSize:12,fontFamily:"inherit"}}>
+          <option value="all">Все магазины</option>
+          {clients.map(c=><option key={c.id} value={c.id}>{c.name}</option>)}
+        </select>
+        <select value={fStatus} onChange={e=>setFStatus(e.target.value)} style={{padding:"7px 9px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,fontSize:12,fontFamily:"inherit"}}>
+          <option value="all">Все статусы</option>
+          {DEBT_STATUSES.map(s=><option key={s} value={s}>{s}</option>)}
+        </select>
+        {isAdmin&&<Btn onClick={()=>{setEdit(null);setForm(emptyForm);setErrs({});setModal(true)}} icon={<I.plus size={15}/>}>Записать долг</Btn>}
       </PageH>
 
-      {/* Owner summary view */}
-      {isOwner&&tab==="all"&&(
-        <>
-          {/* Filters */}
-          <Card s={{marginBottom:16,padding:"12px 16px"}}>
-            <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"center"}}>
-              <SearchBox value={search} onChange={e=>setSearch(e.target.value)} ph="Поиск..."/>
-              <select value={fUser} onChange={e=>setFUser(e.target.value)} style={{padding:"7px 9px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,fontSize:12,fontFamily:"inherit"}}>
-                <option value="all">Все сотрудники</option>
-                {users.filter(u=>u.status==="active").map(u=><option key={u.id} value={u.id}>{u.name.split(" ").slice(0,2).join(" ")}</option>)}
-              </select>
-              <select value={fStatus} onChange={e=>setFStatus(e.target.value)} style={{padding:"7px 9px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,fontSize:12,fontFamily:"inherit"}}>
-                <option value="all">Все статусы</option>
-                {DEBT_STATUSES.map(s=><option key={s} value={s}>{s}</option>)}
-              </select>
-            </div>
-          </Card>
+      <div style={{display:"flex",flexWrap:"wrap",gap:12,marginBottom:16}}>
+        <Stat icon={<I.alert size={18}/>} label="Общий долг" value={totalActive.toLocaleString("ru")+"₽"} color={C.danger}/>
+        <Stat icon={<I.users size={18}/>} label="Должников" value={storeSummary.length} color={C.orange}/>
+      </div>
 
-          {/* Summary stats */}
-          <div style={{display:"flex",flexWrap:"wrap",gap:12,marginBottom:16}}>
-            <Stat icon={<I.alert size={18}/>} label="Общий долг (активные)" value={`${totalActive.toLocaleString("ru")}₽`} color={C.danger}/>
-            <Stat icon={<I.users size={18}/>} label="Должников" value={ownerSummary.length} color={C.orange}/>
-            <Stat icon={<I.file size={18}/>} label="Всего записей" value={(debts||[]).length} color={C.info}/>
+      {storeSummary.length>0&&(
+        <Card s={{marginBottom:16}}>
+          <Title>По магазинам</Title>
+          <div style={{display:"grid",gap:6}}>
+            {storeSummary.map(s=>{
+              const st=clients.find(c=>c.id===s.storeId);
+              return(
+                <div key={s.storeId} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
+                  <div style={{flex:1,fontSize:13,fontWeight:600,color:C.text}}>{st?.name||"—"}</div>
+                  {st?.status==="blacklist"&&<Badge color="danger" s={{fontSize:10}}>ЧС</Badge>}
+                  {st?.lastPaymentDate&&<span style={{fontSize:10,color:C.dim}}>посл. оплата: {fmtShort(st.lastPaymentDate)}</span>}
+                  <span style={{fontWeight:700,color:C.danger,fontSize:14,minWidth:80,textAlign:"right"}}>{s.active.toLocaleString("ru")}₽</span>
+                  {isAdmin&&<button onClick={()=>{setForm({...emptyForm,storeId:s.storeId});setEdit(null);setErrs({});setModal(true)}} style={{fontSize:11,padding:"3px 9px",borderRadius:5,border:`1px solid ${C.primary}30`,background:`${C.primary}10`,color:C.primary,cursor:"pointer",fontFamily:"inherit"}}>+Долг</button>}
+                </div>
+              );
+            })}
           </div>
+        </Card>
+      )}
 
-          {/* Per-user summary */}
-          {ownerSummary.length>0&&(
-            <Card s={{marginBottom:16}}>
-              <Title>Долги по сотрудникам</Title>
-              <div style={{display:"grid",gap:6}}>
-                {ownerSummary.map(s=>{
-                  const u=users.find(x=>x.id===s.userId);
-                  return(
-                    <div key={s.userId} style={{display:"flex",alignItems:"center",gap:10,padding:"8px 0",borderBottom:`1px solid ${C.border}`}}>
-                      <div style={{width:28,height:28,borderRadius:7,background:`${C.danger}15`,color:C.danger,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700,fontSize:12}}>{u?.name.charAt(0)||"?"}</div>
-                      <span style={{flex:1,fontSize:13,fontWeight:500,color:C.text}}>{u?.name.split(" ").slice(0,2).join(" ")||"—"}</span>
-                      <Badge color="primary" s={{fontSize:11}}>{s.count} долг{s.count===1?"":"а"}</Badge>
-                      <span style={{fontWeight:700,color:C.danger,fontSize:14}}>{s.active.toLocaleString("ru")}₽</span>
+      <div style={{display:"grid",gap:10}}>
+        {filtered.map(d=>{
+          const st=clients.find(c=>c.id===d.storeId);
+          const pct=d.amount>0?Math.round((1-d.remaining/d.amount)*100):100;
+          const days=d.dueDate?Math.ceil((new Date(d.dueDate)-new Date())/(86400000)):null;
+          return(
+            <Card key={d.id} s={{borderLeft:`3px solid ${C[statusColor(d.status)]}`}}>
+              <div style={{display:"flex",flexWrap:"wrap",gap:12,alignItems:"flex-start"}}>
+                <div style={{flex:"1 1 200px"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:4}}>
+                    <span style={{fontSize:14,fontWeight:700,color:C.text}}>{d.description}</span>
+                    <Badge color={statusColor(d.status)} s={{fontSize:10}}>{d.status}</Badge>
+                    {days!==null&&days<0&&<Badge color="danger" s={{fontSize:10}}>Просрочен {-days}д</Badge>}
+                    {days!==null&&days>=0&&days<=7&&<Badge color="orange" s={{fontSize:10}}>Срок через {days}д</Badge>}
+                  </div>
+                  <div style={{fontSize:12,color:C.muted,fontWeight:600}}>{st?.name||"—"}</div>
+                  <div style={{fontSize:11,color:C.dim}}>{fmtShort(d.date)}{d.dueDate&&` · Срок: ${fmtShort(d.dueDate)}`}</div>
+                  {d.comment&&<div style={{fontSize:11,color:C.dim,fontStyle:"italic",marginTop:2}}>{d.comment}</div>}
+                </div>
+                <div style={{textAlign:"right",minWidth:110}}>
+                  <div style={{fontSize:20,fontWeight:800,color:d.status==="погашен"?C.success:C.danger}}>{d.remaining.toLocaleString("ru")}₽</div>
+                  {d.remaining!==d.amount&&<div style={{fontSize:11,color:C.dim}}>из {d.amount.toLocaleString("ru")}₽</div>}
+                </div>
+                {isAdmin&&(
+                  <div style={{display:"flex",gap:4,flexDirection:"column"}}>
+                    {d.status!=="погашен"&&<Btn sz="sm" v="success" onClick={()=>openPay(d)} icon={<I.check size={13}/>}>Оплата</Btn>}
+                    <div style={{display:"flex",gap:4}}>
+                      <Btn v="ghost" sz="sm" onClick={()=>{setEdit(d);setForm({storeId:d.storeId,amount:d.amount,description:d.description,date:d.date,dueDate:d.dueDate||"",comment:d.comment||""});setErrs({});setModal(true)}} icon={<I.edit size={13}/>}/>
+                      <Btn v="ghost" sz="sm" onClick={()=>setConfirm({title:"Удалить?",message:`Долг "${d.description}"`,onConfirm:()=>doDelete(d)})} icon={<I.trash size={13}/>}/>
                     </div>
-                  );
-                })}
+                  </div>
+                )}
               </div>
+              {d.amount>0&&d.status!=="активен"&&(
+                <div style={{marginTop:8}}>
+                  <div style={{height:4,background:C.bg,borderRadius:2,overflow:"hidden"}}>
+                    <div style={{height:"100%",width:`${pct}%`,background:C.success,borderRadius:2}}/>
+                  </div>
+                  <div style={{fontSize:10,color:C.dim,marginTop:2}}>Погашено: {pct}%</div>
+                </div>
+              )}
+              {(d.payments||[]).length>0&&(
+                <div style={{marginTop:8,paddingTop:8,borderTop:`1px solid ${C.border}`,display:"flex",flexWrap:"wrap",gap:6}}>
+                  {(d.payments||[]).map(p=>(
+                    <div key={p.id} style={{padding:"3px 9px",background:C.successBg,borderRadius:6,border:`1px solid ${C.success}20`,fontSize:11}}>
+                      <span style={{fontWeight:700,color:C.success}}>-{p.amount.toLocaleString("ru")}₽</span>
+                      <span style={{color:C.dim,marginLeft:5}}>{fmtShort(p.date)}{p.note&&" · "+p.note}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
             </Card>
-          )}
+          );
+        })}
+        {filtered.length===0&&<div style={{textAlign:"center",padding:50,color:C.dim}}>Нет долгов по выбранным фильтрам</div>}
+      </div>
 
-          {/* All debts list */}
-          <div style={{display:"grid",gap:10}}>
-            {allDebts.map(d=><DebtCard key={d.id} d={d} canEdit={false}/>)}
-            {allDebts.length===0&&<div style={{textAlign:"center",padding:50,color:C.dim,fontSize:13}}><I.check size={32}/><p style={{marginTop:10}}>Долгов не найдено</p></div>}
-          </div>
-        </>
-      )}
-
-      {/* My debts view (all non-owner users + owner "my" tab) */}
-      {tab==="my"&&(
-        <>
-          <div style={{display:"flex",flexWrap:"wrap",gap:12,marginBottom:16}}>
-            <Stat icon={<I.alert size={18}/>} label="Активный долг" value={`${myDebts.filter(d=>d.status!=="погашен").reduce((s,d)=>s+d.remaining,0).toLocaleString("ru")}₽`} color={C.danger}/>
-            <Stat icon={<I.file size={18}/>} label="Всего записей" value={myDebts.length} color={C.info}/>
-            <Stat icon={<I.check size={18}/>} label="Погашено" value={myDebts.filter(d=>d.status==="погашен").length} color={C.success}/>
-          </div>
-          <div style={{display:"grid",gap:10}}>
-            {myDebts.map(d=><DebtCard key={d.id} d={d} canEdit={true}/>)}
-            {myDebts.length===0&&(
-              <div style={{textAlign:"center",padding:50,color:C.dim,fontSize:13}}>
-                <I.check size={32}/><p style={{marginTop:10}}>Долгов нет. Нажмите «Добавить долг».</p>
-              </div>
-            )}
-          </div>
-        </>
-      )}
-
-      {/* Add/Edit modal */}
-      <Modal open={modal} onClose={()=>setModal(false)} title={edit?"Редактировать долг":"Новый долг"} width={480}>
-        <Inp label="Сумма (₽)" type="number" min="1" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})} error={errs.amount} placeholder="Например: 5000"/>
-        <Inp label="Описание / причина" value={form.description} onChange={e=>setForm({...form,description:e.target.value})} error={errs.description} placeholder="Например: Аванс за январь"/>
+      <Modal open={modal} onClose={()=>setModal(false)} title={edit?"Редактировать":"Долг магазина"} width={480}>
+        <Sel label="Магазин" value={form.storeId} onChange={e=>setForm({...form,storeId:e.target.value})} error={errs.storeId} options={[{value:"",label:"Выберите"},...clients.map(c=>({value:c.id,label:c.name}))]}/>
+        <Inp label="Сумма (₽)" type="number" min="1" value={form.amount} onChange={e=>setForm({...form,amount:e.target.value})} error={errs.amount}/>
+        <Inp label="Описание" value={form.description} onChange={e=>setForm({...form,description:e.target.value})} error={errs.description} placeholder="Долг за заказ #..."/>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:"0 12px"}}>
-          <Inp label="Дата возникновения" type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})} error={errs.date}/>
-          <Inp label="Срок погашения (необязательно)" type="date" value={form.dueDate} onChange={e=>setForm({...form,dueDate:e.target.value})}/>
+          <Inp label="Дата" type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/>
+          <Inp label="Срок оплаты" type="date" value={form.dueDate} onChange={e=>setForm({...form,dueDate:e.target.value})}/>
         </div>
-        {edit&&(
-          <Sel label="Статус" value={form.status} onChange={e=>setForm({...form,status:e.target.value})} options={DEBT_STATUSES.map(s=>({value:s,label:s}))}/>
-        )}
-        <Txa label="Комментарий (необязательно)" value={form.comment} onChange={e=>setForm({...form,comment:e.target.value})} placeholder="Дополнительные сведения"/>
-        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:6}}>
-          <Btn v="secondary" onClick={()=>setModal(false)}>Отмена</Btn>
-          <Btn v={edit?"primary":"danger"} onClick={save}>{edit?"Сохранить":"Добавить долг"}</Btn>
-        </div>
+        <Txa label="Комментарий" value={form.comment} onChange={e=>setForm({...form,comment:e.target.value})}/>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:6}}><Btn v="secondary" onClick={()=>setModal(false)}>Отмена</Btn><Btn onClick={save}>{edit?"Сохранить":"Добавить"}</Btn></div>
       </Modal>
 
-      {/* Partial payment modal */}
-      <Modal open={!!payModal} onClose={()=>setPayModal(null)} title="Погашение долга" width={400}>
-        {payModal&&(
-          <>
-            <div style={{padding:"8px 12px",background:C.dangerBg,borderRadius:8,border:`1px solid ${C.danger}20`,marginBottom:14,fontSize:13}}>
-              <span style={{color:C.muted}}>{payModal.description} · </span>
-              <span style={{fontWeight:700,color:C.danger}}>Остаток: {payModal.remaining.toLocaleString("ru")}₽</span>
-            </div>
-            <Inp label="Сумма погашения (₽)" type="number" min="1" max={payModal.remaining} value={payForm.amount} onChange={e=>setPayForm({...payForm,amount:e.target.value})} error={payErrs.amount} placeholder={`До ${payModal.remaining}₽`}/>
-            <Inp label="Дата платежа" type="date" value={payForm.date} onChange={e=>setPayForm({...payForm,date:e.target.value})}/>
-            <Inp label="Примечание (необязательно)" value={payForm.note} onChange={e=>setPayForm({...payForm,note:e.target.value})} placeholder="Например: наличными"/>
-            {payForm.amount&&+payForm.amount>0&&+payForm.amount<=payModal.remaining&&(
-              <div style={{padding:"8px 12px",background:C.successBg,borderRadius:8,border:`1px solid ${C.success}20`,marginBottom:12,fontSize:12,color:C.success}}>
-                После погашения останется: <strong>{(payModal.remaining-+payForm.amount).toLocaleString("ru")}₽</strong>
-                {+payForm.amount===payModal.remaining&&" — долг будет закрыт"}
-              </div>
-            )}
-            <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:6}}>
-              <Btn v="secondary" onClick={()=>setPayModal(null)}>Отмена</Btn>
-              <Btn v="success" onClick={savePay} icon={<I.check size={14}/>}>Записать платёж</Btn>
-            </div>
-          </>
-        )}
+      <Modal open={!!payModal} onClose={()=>setPayModal(null)} title="Принять оплату" width={380}>
+        {payModal&&<>
+          <div style={{padding:"8px 12px",background:C.surface2,borderRadius:8,marginBottom:12,fontSize:13}}>
+            <div style={{fontWeight:700}}>{payModal.description}</div>
+            <div style={{color:C.muted,fontSize:12}}>{clients.find(c=>c.id===payModal.storeId)?.name} · Остаток: {payModal.remaining.toLocaleString("ru")}₽</div>
+          </div>
+          <Inp label="Сумма (₽)" type="number" min="1" value={payForm.amount} onChange={e=>setPayForm({...payForm,amount:e.target.value})} error={payErrs.amount}/>
+          <Inp label="Дата" type="date" value={payForm.date} onChange={e=>setPayForm({...payForm,date:e.target.value})}/>
+          <Inp label="Примечание" value={payForm.note} onChange={e=>setPayForm({...payForm,note:e.target.value})} placeholder="Нал/Перевод..."/>
+          <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}><Btn v="secondary" onClick={()=>setPayModal(null)}>Отмена</Btn><Btn v="success" onClick={savePay}>Принять</Btn></div>
+        </>}
       </Modal>
 
       {confirm&&<Confirm open={!!confirm} onClose={()=>setConfirm(null)} title={confirm.title} message={confirm.message} onConfirm={confirm.onConfirm}/>}
@@ -3512,360 +3825,236 @@ const DebtsPage = ()=>{
 };
 
 // ═══════════════════════════════════════════════════════════════
-// SALARY & BONUS STATS PAGE
+// PAYROLL PAGE — Расчёт оплаты
 // ═══════════════════════════════════════════════════════════════
-const SalaryStatsPage = ()=>{
-  const {users,tasks,taskEmployees,productionOutputs,products,bonusRules,setBonusRules,baseSalaries,setBaseSalaries,currentUser,addLog}=useContext(AppContext);
+const PayrollPage = ()=>{
+  const {users,productionOutputs,employeeHistory,baseSalaries,setBaseSalaries,payrollRecords,setPayrollRecords,currentUser,addLog,tasks,taskEmployees}=useContext(AppContext);
   const role=ROLES.find(r=>r.id===currentUser.roleId);
-  const isAdmin=role?.name==="admin";
-  const workers=users.filter(u=>u.roleId===3&&u.status==="active");
+  const isAdmin=role?.name==="admin"||role?.name==="owner";
 
-  // ── Period ──
-  const [period,setPeriod]=useState("month");
-  const [customFrom,setCustomFrom]=useState(()=>new Date().toISOString().slice(0,10));
-  const [customTo,setCustomTo]=useState(()=>new Date().toISOString().slice(0,10));
-  const [sortBy,setSortBy]=useState("qty_desc");
-  const [tab,setTab]=useState("stats"); // stats | rules
+  const getMonday=(date)=>{const d=new Date(date);d.setDate(d.getDate()-d.getDay()+1);return d.toISOString().slice(0,10);};
+  const [week,setWeek]=useState(()=>getMonday(new Date()));
+  const [statusModal,setStatusModal]=useState(null);
   const [toast,setToast]=useState(null);
+  const [baseModal,setBaseModal]=useState(null);
+  const [baseFrm,setBaseFrm]=useState({amount:""});
 
-  const getPeriodDates=()=>{
-    const today=new Date();
-    const todayStr=today.toISOString().slice(0,10);
-    if(period==="today") return[todayStr,todayStr];
-    if(period==="week"){
-      const d=new Date(today);const day=d.getDay()||7;d.setDate(d.getDate()-day+1);
-      const mon=d.toISOString().slice(0,10);
-      const sun=new Date(d);sun.setDate(sun.getDate()+6);
-      return[mon,sun.toISOString().slice(0,10)];
-    }
-    if(period==="month"){
-      return[todayStr.slice(0,7)+"-01",todayStr];
-    }
-    return[customFrom,customTo];
-  };
-  const[fromDate,toDate]=getPeriodDates();
+  const weekStart=new Date(week+"T00:00:00");
+  const weekEnd=new Date(weekStart);weekEnd.setDate(weekStart.getDate()+6);
+  const weekEndStr=weekEnd.toISOString().slice(0,10);
+  const weekDays=Array.from({length:7},(_,i)=>{const d=new Date(weekStart);d.setDate(weekStart.getDate()+i);return d.toISOString().slice(0,10);});
 
-  // ── Per-worker calculation ──
+  const prevWeek=()=>{const d=new Date(week);d.setDate(d.getDate()-7);setWeek(d.toISOString().slice(0,10));};
+  const nextWeek=()=>{const d=new Date(week);d.setDate(d.getDate()+7);setWeek(d.toISOString().slice(0,10));};
+
+  const workers=users.filter(u=>u.status==="active"&&u.roleId!==4);
+
   const workerStats=useMemo(()=>{
     return workers.map(w=>{
-      const byProduct={};
-      // from completed tasks
-      taskEmployees.filter(te=>te.employeeId===w.id&&(te.status==="завершено"||te.status==="просрочено")).forEach(te=>{
-        const task=tasks.find(t=>t.id===te.taskId);
-        if(!task?.completedAt) return;
-        const d=task.completedAt.slice(0,10);
-        if(d<fromDate||d>toDate) return;
-        const pname=products.find(p=>p.id===task.productId)?.name||"?";
-        byProduct[pname]=(byProduct[pname]||0)+te.producedQty;
-      });
-      // from manual outputs
-      (productionOutputs||[]).filter(o=>o.employeeId===w.id).forEach(o=>{
-        const d=o.date.slice(0,10);
-        if(d<fromDate||d>toDate) return;
-        const pname=products.find(p=>p.id===o.productId)?.name||"?";
-        byProduct[pname]=(byProduct[pname]||0)+o.quantity;
-      });
-      const totalQty=Object.values(byProduct).reduce((s,v)=>s+v,0);
-      // bonus rule: highest fromQty ≤ totalQty
-      const sortedRules=[...(bonusRules||[])].sort((a,b)=>b.fromQty-a.fromQty);
-      const rule=sortedRules.find(r=>totalQty>=r.fromQty)||sortedRules[sortedRules.length-1]||{bonusPercent:0,label:"—",fromQty:0};
-      const nextRule=sortedRules.find(r=>r.fromQty>totalQty&&r.fromQty>rule.fromQty)||null;
-      const bonusPercent=rule.bonusPercent||0;
-      const baseSalary=baseSalaries[w.id]||0;
-      const bonusAmount=baseSalary>0?Math.round(baseSalary*bonusPercent/100):0;
-      const toNext=nextRule?nextRule.fromQty-totalQty:0;
-      return{w,totalQty,byProduct,bonusPercent,bonusLabel:rule.label,bonusFromQty:rule.fromQty,bonusAmount,baseSalary,toNext,nextRule};
+      const outputs=(productionOutputs||[]).filter(o=>o.employeeId===w.id&&o.date.slice(0,10)>=week&&o.date.slice(0,10)<=weekEndStr);
+      // Backward compat: old completed tasks that predate the single-output-per-task fix.
+      // Key: "taskId:employeeId" — so a partially-covered task (only some workers have outputs)
+      // still falls back correctly for the uncovered workers.
+      const coveredPairs=new Set((productionOutputs||[]).filter(o=>o.taskId).map(o=>`${o.taskId}:${o.employeeId}`));
+      const legacyUnits=tasks.filter(t=>
+        t.status==="завершено"&&
+        t.completedAt&&t.completedAt.slice(0,10)>=week&&t.completedAt.slice(0,10)<=weekEndStr&&
+        (t.userIds||[]).includes(w.id)&&
+        !coveredPairs.has(`${t.id}:${w.id}`)
+      ).reduce((s,t)=>{
+        const te=taskEmployees.find(te=>te.taskId===t.id&&te.employeeId===w.id);
+        return s+(te?.producedQty||0);
+      },0);
+      const hist=(employeeHistory||[]).filter(h=>h.employeeId===w.id&&weekDays.includes(h.date));
+      const daysWorked=hist.filter(h=>h.attendance==="present"||h.attendance==="late"||h.producedQty>0).length;
+      const totalUnits=outputs.reduce((s,o)=>s+o.quantity,0)+legacyUnits;
+
+      const baseMonthly=baseSalaries[w.id]||0;
+      const pieceRate=w.pieceRate||0;
+      const fixedDayRate=w.fixedDayRate||0;   // ₽/день (денежная ставка)
+      const normPerDay=w.dailyNorm||0;         // ед./день (производственная норма)
+      const weeklyNorm=normPerDay*5;           // норма за рабочую неделю (5 дней)
+
+      let piecePay=0,basePay=0;
+      if(w.payType==="сдельная"){
+        piecePay=pieceRate*totalUnits;
+      } else if(w.payType==="фиксированная"){
+        basePay=baseMonthly>0?Math.round(baseMonthly/4.33):fixedDayRate*daysWorked;
+      } else {
+        basePay=fixedDayRate*daysWorked;
+        piecePay=pieceRate*totalUnits;
+      }
+      const total=+(basePay+piecePay).toFixed(2);
+
+      // Норма выполнена? (для сдельщиков — по выработке, для остальных — по дням)
+      const normMet=w.payType==="сдельная"
+        ?(weeklyNorm===0||totalUnits>=weeklyNorm)
+        :(daysWorked>=5);
+      const normShortfall=w.payType==="сдельная"?Math.max(0,weeklyNorm-totalUnits):0;
+
+      const rec=(payrollRecords||[]).find(r=>r.employeeId===w.id&&r.weekStart===week)||{
+        id:null,employeeId:w.id,weekStart:week,basePay,piecePay,total,status:total>0?"начислено":"—",comment:""
+      };
+      return{w,daysWorked,totalUnits,basePay,piecePay,total,rec,weeklyNorm,normMet,normShortfall};
     });
-  },[workers,tasks,taskEmployees,productionOutputs,products,bonusRules,baseSalaries,fromDate,toDate]);
+  },[workers,productionOutputs,employeeHistory,baseSalaries,payrollRecords,week,weekEndStr]);
 
-  const sorted=useMemo(()=>{
-    const s=[...workerStats];
-    if(sortBy==="qty_desc") s.sort((a,b)=>b.totalQty-a.totalQty);
-    else if(sortBy==="qty_asc") s.sort((a,b)=>a.totalQty-b.totalQty);
-    else if(sortBy==="bonus_desc") s.sort((a,b)=>b.bonusPercent-a.bonusPercent);
-    else s.sort((a,b)=>a.w.name.localeCompare(b.w.name));
-    return s;
-  },[workerStats,sortBy]);
+  const payStatusColor=s=>{
+    if(s==="подтверждено к выплате")return"primary";
+    if(s==="причина подтверждена")return"success";
+    if(s==="удержано")return"danger";
+    if(s==="перенесено")return"orange";
+    return"info";
+  };
 
-  // ── Daily trend data (all workers combined) ──
-  const trendData=useMemo(()=>{
-    const m={};
-    taskEmployees.filter(te=>te.status==="завершено"||te.status==="просрочено").forEach(te=>{
-      if(!workers.find(w=>w.id===te.employeeId)) return;
-      const task=tasks.find(t=>t.id===te.taskId);
-      if(!task?.completedAt) return;
-      const d=task.completedAt.slice(0,10);
-      if(d<fromDate||d>toDate) return;
-      m[d]=(m[d]||0)+te.producedQty;
-    });
-    (productionOutputs||[]).forEach(o=>{
-      if(!workers.find(w=>w.id===o.employeeId)) return;
-      const d=o.date.slice(0,10);
-      if(d<fromDate||d>toDate) return;
-      m[d]=(m[d]||0)+o.quantity;
-    });
-    return Object.entries(m).sort(([a],[b])=>a.localeCompare(b)).map(([date,qty])=>({date:date.slice(5),qty}));
-  },[taskEmployees,productionOutputs,tasks,workers,fromDate,toDate]);
-
-  const barData=sorted.map(s=>({name:s.w.name.split(" ").slice(0,2).join(" "),qty:s.totalQty,bonus:s.bonusPercent}));
-  const totalAll=workerStats.reduce((s,w)=>s+w.totalQty,0);
-  const avgQty=workers.length?Math.round(totalAll/workers.length):0;
-  const topWorker=sorted[0];
-
-  // ── Bonus Rules Editor ──
-  const [ruleForm,setRuleForm]=useState({fromQty:"",bonusPercent:"",label:""});
-  const [ruleEdit,setRuleEdit]=useState(null);
-  const [ruleErrs,setRuleErrs]=useState({});
-
-  const saveRule=()=>{
-    const e={};
-    if(ruleForm.fromQty===""||+ruleForm.fromQty<0) e.fromQty="!";
-    if(ruleForm.bonusPercent===""||+ruleForm.bonusPercent<0||+ruleForm.bonusPercent>100) e.bonusPercent="0–100";
-    if(!ruleForm.label.trim()) e.label="!";
-    setRuleErrs(e);if(Object.keys(e).length) return;
-    if(ruleEdit){
-      setBonusRules(p=>p.map(r=>r.id===ruleEdit.id?{...r,fromQty:+ruleForm.fromQty,bonusPercent:+ruleForm.bonusPercent,label:ruleForm.label}:r));
-      setToast({message:"Правило обновлено",type:"success"});
+  const setStatus=(emp,rec,status,comment)=>{
+    const now=new Date().toISOString();
+    if(rec.id){
+      setPayrollRecords(p=>p.map(r=>r.id===rec.id?{...r,status,comment,updatedBy:currentUser.id,updatedAt:now}:r));
     } else {
-      setBonusRules(p=>[...p,{id:Date.now(),fromQty:+ruleForm.fromQty,bonusPercent:+ruleForm.bonusPercent,label:ruleForm.label}]);
-      setToast({message:"Правило добавлено",type:"success"});
+      setPayrollRecords(p=>[...(p||[]),{id:Date.now(),employeeId:emp.id,weekStart:week,basePay:rec.basePay,piecePay:rec.piecePay,total:rec.total,status,comment,createdBy:currentUser.id,createdAt:now}]);
     }
-    setRuleEdit(null);setRuleForm({fromQty:"",bonusPercent:"",label:""});
+    addLog(`Расчёт: ${emp.name.split(" ")[0]} — ${status}`);
+    setToast({message:"Статус обновлён",type:"success"});
+    setStatusModal(null);
   };
-  const deleteRule=id=>{
-    if((bonusRules||[]).length<=1){setToast({message:"Нельзя удалить последнее правило",type:"error"});return;}
-    setBonusRules(p=>p.filter(r=>r.id!==id));
-    setToast({message:"Удалено",type:"error"});
-  };
-  const startEditRule=r=>{setRuleEdit(r);setRuleForm({fromQty:r.fromQty,bonusPercent:r.bonusPercent,label:r.label});};
-  const sortedRules=[...(bonusRules||[])].sort((a,b)=>a.fromQty-b.fromQty);
 
-  const periodLabel={today:"Сегодня",week:"Эта неделя",month:"Этот месяц",custom:"Период"}[period];
-  const tabStyle=active=>({padding:"7px 16px",borderRadius:7,border:`1px solid ${active?C.primary:C.border}`,background:active?C.primaryBg:C.surface,color:active?C.primary:C.muted,fontSize:12,fontWeight:600,cursor:"pointer",fontFamily:"inherit"});
+  const saveBase=()=>{
+    if(!baseModal) return;
+    const sal=+baseFrm.amount;
+    if(sal>0) setBaseSalaries(p=>({...p,[baseModal.id]:sal}));
+    else setBaseSalaries(p=>{const n={...p};delete n[baseModal.id];return n;});
+    addLog(`Ставка: ${baseModal.name.split(" ")[0]} — ${sal}₽/мес`);
+    setToast({message:"Ставка обновлена",type:"success"});
+    setBaseModal(null);
+  };
+
+  const totalAll=workerStats.reduce((s,ws)=>s+ws.total,0);
+  const weekLabel=`${fmtShort(week)} — ${fmtShort(weekEndStr)}`;
+  const confirmed=workerStats.filter(ws=>ws.rec.status==="подтверждено к выплате").reduce((s,ws)=>s+ws.total,0);
 
   return(
     <div>
-      <PageH title="Статистика выработки и премии">
-        <div style={{display:"flex",gap:5,flexWrap:"wrap"}}>
-          {[["stats","Статистика"],["rules","Правила премий"]].map(([t,l])=>(
-            (t==="rules"&&!isAdmin)?null:
-            <button key={t} onClick={()=>setTab(t)} style={tabStyle(tab===t)}>{l}</button>
-          ))}
+      <PageH title="Расчёт оплаты">
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <button onClick={prevWeek} style={{padding:"6px 10px",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:15,lineHeight:1}}>‹</button>
+          <span style={{fontSize:13,fontWeight:600,color:C.text,minWidth:170,textAlign:"center"}}>{weekLabel}</span>
+          <button onClick={nextWeek} style={{padding:"6px 10px",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,cursor:"pointer",fontFamily:"inherit",fontSize:15,lineHeight:1}}>›</button>
         </div>
+        <button onClick={()=>setWeek(getMonday(new Date()))} style={{padding:"6px 10px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.dim,cursor:"pointer",fontFamily:"inherit",fontSize:12}}>Тек. неделя</button>
       </PageH>
 
-      {tab==="stats"&&(<>
-        {/* Period selector */}
-        <Card s={{marginBottom:16,padding:"12px 16px"}}>
-          <div style={{display:"flex",flexWrap:"wrap",gap:8,alignItems:"center"}}>
-            <span style={{fontSize:12,color:C.muted,fontWeight:600}}>Период:</span>
-            {[["today","Сегодня"],["week","Неделя"],["month","Месяц"],["custom","Произвольный"]].map(([v,l])=>(
-              <button key={v} onClick={()=>setPeriod(v)} style={tabStyle(period===v)}>{l}</button>
-            ))}
-            {period==="custom"&&(<>
-              <input type="date" value={customFrom} onChange={e=>setCustomFrom(e.target.value)} style={{padding:"6px 8px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12,fontFamily:"inherit"}}/>
-              <span style={{color:C.dim}}>—</span>
-              <input type="date" value={customTo} onChange={e=>setCustomTo(e.target.value)} style={{padding:"6px 8px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12,fontFamily:"inherit"}}/>
-            </>)}
-            <span style={{marginLeft:"auto",fontSize:11,color:C.dim}}>{fromDate} → {toDate}</span>
-            <select value={sortBy} onChange={e=>setSortBy(e.target.value)} style={{padding:"6px 8px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:6,color:C.text,fontSize:12,fontFamily:"inherit"}}>
-              <option value="qty_desc">↓ По выработке</option>
-              <option value="qty_asc">↑ По выработке</option>
-              <option value="bonus_desc">↓ По премии</option>
-              <option value="name">По имени</option>
-            </select>
-          </div>
-        </Card>
+      <div style={{display:"flex",flexWrap:"wrap",gap:12,marginBottom:16}}>
+        <Stat icon={<I.chart size={18}/>} label="К выплате (неделя)" value={totalAll.toLocaleString("ru")+"₽"} color={C.primary}/>
+        <Stat icon={<I.check size={18}/>} label="Подтверждено" value={confirmed.toLocaleString("ru")+"₽"} color={C.success}/>
+        <Stat icon={<I.people size={18}/>} label="Сотрудников" value={workers.length} color={C.info}/>
+      </div>
 
-        {/* Summary stats */}
-        <div style={{display:"flex",flexWrap:"wrap",gap:12,marginBottom:16}}>
-          <Stat icon={<I.factory size={18}/>} label={`Выработка (${periodLabel})`} value={`${totalAll} ед.`} color={C.success}/>
-          <Stat icon={<I.people size={18}/>} label="Среднее на сотрудника" value={`${avgQty} ед.`} color={C.info}/>
-          {topWorker&&<Stat icon={<I.star size={18}/>} label={`Лидер: ${topWorker.w.name.split(" ")[1]||topWorker.w.name}`} value={`${topWorker.totalQty} ед.`} color={C.primary}/>}
-          {topWorker&&<Stat icon={<I.chart size={18}/>} label="Макс. премия" value={`+${topWorker.bonusPercent}%`} color={C.success}/>}
-        </div>
-
-        {/* Charts row */}
-        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(300px,1fr))",gap:14,marginBottom:16}}>
-          <Card>
-            <Title>Выработка по сотрудникам</Title>
-            <ResponsiveContainer width="100%" height={220}>
-              <BarChart data={barData} layout="vertical">
-                <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
-                <XAxis type="number" tick={{fill:C.dim,fontSize:10}}/>
-                <YAxis type="category" dataKey="name" tick={{fill:C.text,fontSize:11}} width={80}/>
-                <Tooltip contentStyle={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,fontSize:12}} formatter={(v,n)=>[v, n==="qty"?"Выработка":"Премия %"]}/>
-                <Bar dataKey="qty" fill={C.success} radius={[0,4,4,0]} name="qty"/>
-              </BarChart>
-            </ResponsiveContainer>
-          </Card>
-          <Card>
-            <Title>Выработка по дням</Title>
-            {trendData.length>0?(
-              <ResponsiveContainer width="100%" height={220}>
-                <AreaChart data={trendData}>
-                  <defs><linearGradient id="gS" x1="0" y1="0" x2="0" y2="1"><stop offset="5%" stopColor={C.success} stopOpacity={.3}/><stop offset="95%" stopColor={C.success} stopOpacity={0}/></linearGradient></defs>
-                  <CartesianGrid strokeDasharray="3 3" stroke={C.border}/>
-                  <XAxis dataKey="date" tick={{fill:C.dim,fontSize:10}}/>
-                  <YAxis tick={{fill:C.dim,fontSize:10}}/>
-                  <Tooltip contentStyle={{background:C.surface2,border:`1px solid ${C.border}`,borderRadius:8,color:C.text,fontSize:12}} formatter={v=>[v,"Выработка"]}/>
-                  <Area type="monotone" dataKey="qty" stroke={C.success} fill="url(#gS)" name="Выработка"/>
-                </AreaChart>
-              </ResponsiveContainer>
-            ):<div style={{height:220,display:"flex",alignItems:"center",justifyContent:"center",color:C.dim,fontSize:13}}>Нет данных за период</div>}
-          </Card>
-        </div>
-
-        {/* Worker cards */}
-        <div style={{display:"grid",gap:12}}>
-          {sorted.map((s,i)=>{
-            const breakdown=Object.entries(s.byProduct).sort((a,b)=>b[1]-a[1]);
-            const bonusClr=s.bonusPercent>=15?C.success:s.bonusPercent>=10?C.primary:s.bonusPercent>=5?C.orange:C.dim;
-            return(
-              <Card key={s.w.id} s={{borderLeft:`3px solid ${bonusClr}`}}>
-                <div style={{display:"flex",flexWrap:"wrap",gap:14,alignItems:"flex-start"}}>
-                  {/* Avatar + name */}
-                  <div style={{display:"flex",alignItems:"center",gap:10,minWidth:160}}>
-                    <div style={{width:40,height:40,borderRadius:10,background:`${CC[i%CC.length]}15`,color:CC[i%CC.length],display:"flex",alignItems:"center",justifyContent:"center",fontWeight:800,fontSize:17,border:`2px solid ${CC[i%CC.length]}30`,flexShrink:0}}>
-                      {s.w.name.charAt(0)}
-                    </div>
-                    <div>
-                      <div style={{fontSize:14,fontWeight:700,color:C.text}}>{s.w.name.split(" ").slice(0,2).join(" ")}</div>
-                      <div style={{fontSize:11,color:C.dim}}>#{i+1} по выработке</div>
-                    </div>
-                  </div>
-
-                  {/* Qty */}
-                  <div style={{textAlign:"center",minWidth:80}}>
-                    <div style={{fontSize:26,fontWeight:800,color:C.text}}>{s.totalQty}</div>
-                    <div style={{fontSize:11,color:C.dim}}>единиц</div>
-                  </div>
-
-                  {/* Bonus */}
-                  <div style={{padding:"8px 14px",background:`${bonusClr}12`,borderRadius:10,border:`1px solid ${bonusClr}25`,minWidth:120}}>
-                    <div style={{fontSize:22,fontWeight:800,color:bonusClr}}>+{s.bonusPercent}%</div>
-                    <div style={{fontSize:11,fontWeight:600,color:bonusClr,marginTop:1}}>{s.bonusLabel}</div>
-                    <div style={{fontSize:10,color:C.dim,marginTop:2}}>от {s.bonusFromQty}+ ед.</div>
-                  </div>
-
-                  {/* Salary calc */}
-                  <div style={{minWidth:140}}>
-                    {s.baseSalary>0?(
-                      <div style={{padding:"8px 14px",background:C.bg,borderRadius:8,border:`1px solid ${C.border}`}}>
-                        <div style={{fontSize:11,color:C.dim}}>Базовая ставка</div>
-                        <div style={{fontSize:14,fontWeight:600,color:C.text}}>{s.baseSalary.toLocaleString("ru")} ₽</div>
-                        {s.bonusPercent>0&&<>
-                          <div style={{fontSize:11,color:C.dim,marginTop:4}}>Премия</div>
-                          <div style={{fontSize:14,fontWeight:700,color:C.success}}>+{s.bonusAmount.toLocaleString("ru")} ₽</div>
-                          <div style={{height:1,background:C.border,margin:"6px 0"}}/>
-                          <div style={{fontSize:13,fontWeight:800,color:C.text}}>{(s.baseSalary+s.bonusAmount).toLocaleString("ru")} ₽</div>
-                        </>}
-                      </div>
-                    ):(
-                      <div style={{fontSize:11,color:C.dim,padding:"8px 0"}}>Ставка не указана<br/><span style={{color:C.info}}>Задайте в Пользователях</span></div>
-                    )}
-                  </div>
-
-                  {/* To next level */}
-                  {s.toNext>0&&s.nextRule&&(
-                    <div style={{fontSize:11,color:C.muted,padding:"8px 0",maxWidth:140}}>
-                      <div>До уровня <strong style={{color:C.primary}}>{s.nextRule.label}</strong>:</div>
-                      <div style={{fontWeight:700,color:C.primary,fontSize:13}}>{s.toNext} ед.</div>
-                      <div style={{color:C.dim}}>(+{s.nextRule.bonusPercent}% премия)</div>
-                    </div>
-                  )}
-
-                  {/* Product breakdown */}
-                  {breakdown.length>0&&(
-                    <div style={{flex:"1 1 160px"}}>
-                      <div style={{fontSize:11,color:C.dim,marginBottom:6}}>По продуктам:</div>
-                      <div style={{display:"flex",flexWrap:"wrap",gap:5}}>
-                        {breakdown.map(([name,qty])=>(
-                          <div key={name} style={{padding:"3px 9px",background:C.bg,borderRadius:6,border:`1px solid ${C.border}`,fontSize:11}}>
-                            <span style={{color:C.muted}}>{name.length>12?name.slice(0,12)+"…":name}</span>
-                            <span style={{fontWeight:700,color:C.text,marginLeft:5}}>{qty}</span>
-                          </div>
-                        ))}
-                      </div>
+      <div style={{display:"grid",gap:10}}>
+        {workerStats.map(({w,daysWorked,totalUnits,basePay,piecePay,total,rec,weeklyNorm,normMet,normShortfall})=>{
+          const clr=payStatusColor(rec.status);
+          const borderClr=!normMet&&total>0?C.orange:C[clr];
+          return(
+            <Card key={w.id} s={{borderLeft:`3px solid ${borderClr}`}}>
+              <div style={{display:"flex",flexWrap:"wrap",gap:14,alignItems:"center"}}>
+                <div style={{flex:"1 1 180px"}}>
+                  <div style={{fontSize:14,fontWeight:700,color:C.text}}>{w.name}</div>
+                  <div style={{fontSize:11,color:C.dim}}>{w.jobTitle||"—"} · {w.payType||"—"}</div>
+                  {weeklyNorm>0&&(
+                    <div style={{fontSize:10,marginTop:2}}>
+                      <span style={{color:C.dim}}>Норма: </span>
+                      <span style={{color:normMet?C.success:C.orange,fontWeight:700}}>{totalUnits}</span>
+                      <span style={{color:C.dim}}>/{weeklyNorm} ед.</span>
+                      {!normMet&&normShortfall>0&&<span style={{color:C.orange,fontWeight:600}}> (−{normShortfall})</span>}
                     </div>
                   )}
                 </div>
-
-                {/* Progress to next level */}
-                {s.nextRule&&s.totalQty>0&&(
-                  <div style={{marginTop:12}}>
-                    <div style={{display:"flex",justifyContent:"space-between",fontSize:10,color:C.dim,marginBottom:3}}>
-                      <span>{s.bonusLabel} ({s.bonusFromQty} ед.)</span>
-                      <span>{s.nextRule.label} ({s.nextRule.fromQty} ед.)</span>
-                    </div>
-                    <div style={{height:4,background:C.bg,borderRadius:2,overflow:"hidden"}}>
-                      <div style={{height:"100%",width:`${Math.min(100,Math.round((s.totalQty-s.bonusFromQty)/(s.nextRule.fromQty-s.bonusFromQty)*100))}%`,background:bonusClr,borderRadius:2,transition:"width .4s"}}/>
-                    </div>
+                <div style={{display:"flex",gap:16,flexWrap:"wrap",alignItems:"flex-end"}}>
+                  <div style={{textAlign:"center"}}>
+                    <div style={{fontSize:18,fontWeight:700,color:C.text}}>{daysWorked}</div>
+                    <div style={{fontSize:10,color:C.dim}}>дней</div>
                   </div>
-                )}
-              </Card>
-            );
-          })}
-          {sorted.length===0&&<div style={{textAlign:"center",padding:50,color:C.dim,fontSize:13}}>Нет активных сотрудников</div>}
-        </div>
-      </>)}
+                  <div style={{textAlign:"center"}}>
+                    <div style={{fontSize:18,fontWeight:700,color:normMet||weeklyNorm===0?C.text:C.orange}}>{totalUnits}</div>
+                    <div style={{fontSize:10,color:C.dim}}>единиц</div>
+                  </div>
+                  {basePay>0&&(
+                    <div style={{textAlign:"center"}}>
+                      <div style={{fontSize:15,fontWeight:600,color:C.muted}}>{basePay.toLocaleString("ru")}₽</div>
+                      <div style={{fontSize:10,color:C.dim}}>фикс</div>
+                    </div>
+                  )}
+                  {piecePay>0&&(
+                    <div style={{textAlign:"center"}}>
+                      <div style={{fontSize:15,fontWeight:600,color:C.muted}}>{piecePay.toLocaleString("ru")}₽</div>
+                      <div style={{fontSize:10,color:C.dim}}>сдельно</div>
+                    </div>
+                  )}
+                  <div style={{textAlign:"center"}}>
+                    <div style={{fontSize:22,fontWeight:800,color:total>0?C.success:C.dim}}>{total.toLocaleString("ru")}₽</div>
+                    <div style={{fontSize:10,color:C.dim}}>итого</div>
+                  </div>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:6}}>
+                  {!normMet&&weeklyNorm>0&&<Badge color="orange" s={{fontSize:10}}>норма не выполнена</Badge>}
+                  <Badge color={clr} s={{fontSize:10}}>{rec.status}</Badge>
+                  {isAdmin&&(
+                    <div style={{display:"flex",gap:4}}>
+                      <Btn v="ghost" sz="sm" onClick={()=>setStatusModal({rec,emp:w})} icon={<I.clip size={13}/>}/>
+                      <Btn v="ghost" sz="sm" onClick={()=>{setBaseModal(w);setBaseFrm({amount:baseSalaries[w.id]||""});}} icon={<I.edit size={13}/>}/>
+                    </div>
+                  )}
+                </div>
+              </div>
+              {rec.comment&&<div style={{marginTop:6,fontSize:11,color:C.dim,fontStyle:"italic",paddingTop:6,borderTop:`1px solid ${C.border}`}}>{rec.comment}</div>}
+            </Card>
+          );
+        })}
+        {workerStats.length===0&&<div style={{textAlign:"center",padding:50,color:C.dim}}>Нет активных сотрудников</div>}
+      </div>
 
-      {tab==="rules"&&isAdmin&&(
-        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:16,alignItems:"start"}}>
-          {/* Rules table */}
-          <Card s={{padding:0,overflow:"hidden"}}>
-            <div style={{padding:"14px 18px",borderBottom:`1px solid ${C.border}`,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-              <Title>Пороги премий</Title>
+      <Modal open={!!statusModal} onClose={()=>setStatusModal(null)} title="Статус выплаты" width={380}>
+        {statusModal&&(
+          <div>
+            <div style={{marginBottom:12,padding:"10px 14px",background:C.surface2,borderRadius:8}}>
+              <div style={{fontWeight:700,color:C.text}}>{statusModal.emp.name}</div>
+              <div style={{fontSize:12,color:C.muted}}>Итого: <strong style={{color:C.success}}>{statusModal.rec.total.toLocaleString("ru")}₽</strong> · неделя {week}</div>
             </div>
-            <table style={{width:"100%",borderCollapse:"collapse"}}>
-              <thead><tr><TH>От (ед.)</TH><TH>Премия %</TH><TH>Название уровня</TH><TH></TH></tr></thead>
-              <tbody>
-                {sortedRules.map((r,i)=>{
-                  const next=sortedRules[i+1];
-                  return(
-                    <tr key={r.id} style={{borderBottom:`1px solid ${C.border}`}}>
-                      <TD s={{fontWeight:700,color:C.primary}}>{r.fromQty}+{next?` (до ${next.fromQty-1})`:""}</TD>
-                      <TD><Badge color={r.bonusPercent>=15?"success":r.bonusPercent>=10?"primary":r.bonusPercent>=5?"orange":"info"}>+{r.bonusPercent}%</Badge></TD>
-                      <TD s={{fontWeight:500}}>{r.label}</TD>
-                      <TD><div style={{display:"flex",gap:4}}>
-                        <Btn v="ghost" sz="sm" onClick={()=>startEditRule(r)} icon={<I.edit size={13}/>}/>
-                        <Btn v="ghost" sz="sm" onClick={()=>deleteRule(r.id)} icon={<I.trash size={13}/>}/>
-                      </div></TD>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-            <div style={{padding:"10px 16px",borderTop:`1px solid ${C.border}`,fontSize:11,color:C.dim}}>
-              Логика: находится наибольший порог ≤ выработки сотрудника → применяется его %.
-            </div>
-          </Card>
-
-          {/* Rule form */}
-          <Card>
-            <Title>{ruleEdit?"Редактировать правило":"Новое правило"}</Title>
-            <Inp label="От (количество единиц)" type="number" min="0" value={ruleForm.fromQty} onChange={e=>setRuleForm({...ruleForm,fromQty:e.target.value})} error={ruleErrs.fromQty} placeholder="напр. 100"/>
-            <Inp label="Процент премии (%)" type="number" min="0" max="100" value={ruleForm.bonusPercent} onChange={e=>setRuleForm({...ruleForm,bonusPercent:e.target.value})} error={ruleErrs.bonusPercent} placeholder="напр. 10"/>
-            <Inp label="Название уровня" value={ruleForm.label} onChange={e=>setRuleForm({...ruleForm,label:e.target.value})} error={ruleErrs.label} placeholder="напр. Отлично"/>
-            <div style={{display:"flex",gap:8,marginTop:6}}>
-              {ruleEdit&&<Btn v="secondary" onClick={()=>{setRuleEdit(null);setRuleForm({fromQty:"",bonusPercent:"",label:""});}}>Отмена</Btn>}
-              <Btn v={ruleEdit?"primary":"success"} onClick={saveRule}>{ruleEdit?"Сохранить":"Добавить правило"}</Btn>
-            </div>
-
-            <div style={{marginTop:20,padding:"12px 14px",background:`${C.primary}08`,borderRadius:8,border:`1px solid ${C.primary}20`}}>
-              <div style={{fontSize:12,fontWeight:700,color:C.text,marginBottom:8}}>Пример расчёта</div>
-              {sortedRules.map((r,i)=>{
-                const qty=r.fromQty+(sortedRules[i+1]?Math.floor((sortedRules[i+1].fromQty-r.fromQty)/2):100);
+            <div style={{display:"grid",gap:6,marginBottom:12}}>
+              {PAYROLL_STATUSES.map(s=>{
+                const active=statusModal.rec.status===s;
+                const c=payStatusColor(s);
                 return(
-                  <div key={r.id} style={{fontSize:11,color:C.muted,marginBottom:3}}>
-                    Выработка {qty} ед. → <strong style={{color:C.text}}>{r.label}</strong> → <span style={{color:C.success}}>+{r.bonusPercent}%</span>
-                  </div>
+                  <button key={s} onClick={()=>{
+                    const comment=statusModal.rec.comment||"";
+                    setStatus(statusModal.emp,statusModal.rec,s,comment);
+                  }} style={{padding:"10px 14px",background:active?`${C[c]}20`:C.bg,border:`1px solid ${active?C[c]:C.border}`,borderRadius:8,color:active?C[c]:C.muted,cursor:"pointer",fontFamily:"inherit",fontSize:13,fontWeight:active?700:400,textAlign:"left"}}>
+                    {s}
+                  </button>
                 );
               })}
             </div>
-          </Card>
-        </div>
-      )}
+            <Txa label="Комментарий" value={statusModal.rec.comment||""} onChange={e=>setStatusModal(m=>({...m,rec:{...m.rec,comment:e.target.value}}))} placeholder="Примечание..."/>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:8}}>
+              <Btn v="secondary" onClick={()=>setStatusModal(null)}>Закрыть</Btn>
+            </div>
+          </div>
+        )}
+      </Modal>
+
+      <Modal open={!!baseModal} onClose={()=>setBaseModal(null)} title="Базовая ставка (₽/мес)" width={360}>
+        {baseModal&&(
+          <div>
+            <div style={{marginBottom:10,fontSize:13,color:C.muted}}>Сотрудник: <strong style={{color:C.text}}>{baseModal.name}</strong></div>
+            <Inp label="Сумма (₽/месяц)" type="number" min="0" value={baseFrm.amount} onChange={e=>setBaseFrm({amount:e.target.value})} placeholder="0 = не задана"/>
+            <div style={{fontSize:11,color:C.dim,marginTop:4}}>Для расчёта недели делится на 4.33. При сдельной оплате не используется.</div>
+            <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:12}}>
+              <Btn v="secondary" onClick={()=>setBaseModal(null)}>Отмена</Btn>
+              <Btn onClick={saveBase}>Сохранить</Btn>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {toast&&<Toast {...toast} onClose={()=>setToast(null)}/>}
     </div>
@@ -3876,7 +4065,7 @@ const SalaryStatsPage = ()=>{
 // PRODUCTION OUTPUT PAGE
 // ═══════════════════════════════════════════════════════════════
 const ProductionOutputPage = ()=>{
-  const {productionOutputs,setProductionOutputs,products,setProducts,inventoryMovements,setInventoryMovements,employeeHistory,setEmployeeHistory,productionPlans,setProductionPlans,users,currentUser,addLog,addNotification}=useContext(AppContext);
+  const {productionOutputs,setProductionOutputs,products,users,currentUser,addLog,addNotification,recipes,rawMaterials,setBatches,applyOutput,revertOutput,applyServerState}=useContext(AppContext);
   const role=ROLES.find(r=>r.id===currentUser.roleId);
   const isWorker=role?.name==="worker";
   const workers=users.filter(u=>u.roleId===3&&u.status==="active");
@@ -3901,7 +4090,9 @@ const ProductionOutputPage = ()=>{
 
   const list=useMemo(()=>{
     let l=[...(productionOutputs||[])];
-    if(fEmp!=="all") l=l.filter(o=>o.employeeId===+fEmp);
+    // Worker sees only their own records
+    if(isWorker) l=l.filter(o=>o.employeeId===currentUser.id);
+    else if(fEmp!=="all") l=l.filter(o=>o.employeeId===+fEmp);
     if(search){
       const s=search.toLowerCase();
       l=l.filter(o=>{
@@ -3911,7 +4102,7 @@ const ProductionOutputPage = ()=>{
       });
     }
     return l.sort((a,b)=>new Date(b.date)-new Date(a.date));
-  },[productionOutputs,fEmp,search,products,users]);
+  },[productionOutputs,fEmp,search,products,users,isWorker,currentUser]);
 
   const openNew=()=>{setEdit(null);setForm(emptyForm);setErrs({});setModal(true)};
   const openEdit=(o)=>{
@@ -3929,38 +4120,9 @@ const ProductionOutputPage = ()=>{
     setErrs(e);return!Object.keys(e).length;
   };
 
-  const revertOutput=(out)=>{
-    setProducts(p=>p.map(x=>x.id===out.productId?{...x,stock:Math.max(0,x.stock-out.quantity),updatedAt:new Date().toISOString()}:x));
-    setInventoryMovements(p=>p.filter(m=>m.refId!==`output-${out.id}`));
-    const ds=out.date.slice(0,10);
-    setEmployeeHistory(p=>p.map(h=>h.employeeId===out.employeeId&&h.date===ds?{...h,producedQty:Math.max(0,h.producedQty-out.quantity)}:h));
-    setProductionPlans(p=>p.map(pl=>{
-      if(pl.productId===out.productId&&pl.productionDate===ds&&pl.status!=="отменён"){
-        const nc=Math.max(0,pl.completedQty-out.quantity);
-        return{...pl,completedQty:nc,status:nc>=pl.plannedQty?"выполнен":nc>0?"в процессе":"запланирован"};
-      }return pl;
-    }));
-  };
+  // applyOutput and revertOutput are provided via AppContext (defined in App())
 
-  const applyOutput=(out,stockBefore)=>{
-    const newBalance=stockBefore+out.quantity;
-    setProducts(p=>p.map(x=>x.id===out.productId?{...x,stock:x.stock+out.quantity,updatedAt:new Date().toISOString()}:x));
-    setInventoryMovements(p=>[...p,{id:out.id+0.1,productId:out.productId,type:"output",quantity:out.quantity,balance:newBalance,refId:`output-${out.id}`,createdAt:out.date}]);
-    const ds=out.date.slice(0,10);
-    setEmployeeHistory(p=>{
-      const ex=p.find(h=>h.employeeId===out.employeeId&&h.date===ds);
-      if(ex) return p.map(h=>h.id===ex.id?{...h,producedQty:h.producedQty+out.quantity}:h);
-      return [...p,{id:Date.now()+Math.random(),employeeId:out.employeeId,date:ds,attendance:"present",tasksCompleted:0,producedQty:out.quantity,workStart:"09:00",workEnd:"18:00",comment:""}];
-    });
-    setProductionPlans(p=>p.map(pl=>{
-      if(pl.productId===out.productId&&pl.productionDate===ds&&pl.status!=="отменён"){
-        const nc=Math.min(pl.plannedQty,pl.completedQty+out.quantity);
-        return{...pl,completedQty:nc,status:nc>=pl.plannedQty?"выполнен":"в процессе"};
-      }return pl;
-    }));
-  };
-
-  const save=()=>{
+  const save=async()=>{
     if(!validate()) return;
     const qty=+form.quantity;const productId=+form.productId;const employeeId=+form.employeeId;
     const now=new Date().toISOString();
@@ -3968,6 +4130,7 @@ const ProductionOutputPage = ()=>{
     const prod=products.find(p=>p.id===productId);
     const emp=users.find(u=>u.id===employeeId);
     if(edit){
+      // Edit is only accessible to manager/admin (workers see no edit button)
       const stockBefore=edit.productId===productId?Math.max(0,curStock-edit.quantity):curStock;
       revertOutput(edit);
       const newOut={...edit,productId,employeeId,quantity:qty,date:new Date(form.date).toISOString(),comment:form.comment,updatedAt:now};
@@ -3975,11 +4138,33 @@ const ProductionOutputPage = ()=>{
       applyOutput(newOut,stockBefore);
       addLog(`Выпуск изменён: ${prod?.name} x${qty} → ${emp?.name?.split(" ").slice(0,2).join(" ")}`);
       setToast({message:"Запись обновлена",type:"success"});
+    } else if(isWorker){
+      // ── Worker path: server action endpoint ──
+      // Workers cannot write manager-only keys, so delegate all derived updates.
+      try{
+        const r=await fetch("/api/actions/output-record",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({productId,employeeId,quantity:qty,date:form.date,comment:form.comment}),
+        });
+        const data=await r.json();
+        if(!r.ok){setToast({message:data.error||"Ошибка сервера",type:"error"});return;}
+        applyServerState(data.state);
+        setToast({message:"Выпуск зафиксирован!",type:"success"});
+      }catch(e){
+        setToast({message:"Нет соединения с сервером",type:"error"});return;
+      }
     } else {
+      // ── Manager / Admin path (unchanged) ──
       const id=Date.now();
-      const newOut={id,productId,employeeId,quantity:qty,date:new Date(form.date).toISOString(),comment:form.comment,createdAt:now,createdBy:currentUser.id};
+      const batchId=id+0.5;
+      const expiresAt=new Date(new Date(form.date).getTime()+7*24*3600*1000).toISOString();
+      // source:"manual" — one output, one batch, no taskId
+      const newOut={id,productId,employeeId,quantity:qty,date:new Date(form.date).toISOString(),comment:form.comment,source:"manual",taskId:null,batchId,createdAt:now,createdBy:currentUser.id};
       setProductionOutputs(p=>[...(p||[]),newOut]);
+      setBatches(p=>[...(p||[]),{id:batchId,productId,quantity:qty,producedAt:new Date(form.date).toISOString(),expiresAt,createdBy:currentUser.id,status:"активна",note:form.comment||"",taskId:null}]);
       applyOutput(newOut,curStock);
+      // Batch created above; applyOutput handles stock/raw/movements/history/plans
       addLog(`Выпуск: ${prod?.name} x${qty} → ${emp?.name?.split(" ").slice(0,2).join(" ")}`);
       addNotification({title:`Выпуск: ${prod?.name} x${qty}`,type:"информация",content:`${emp?.name?.split(" ").slice(0,2).join(" ")} зафиксировал выпуск ${prod?.name} — ${qty} ${prod?.unit}`,targetAll:true});
       setToast({message:"Выпуск зафиксирован!",type:"success"});
@@ -4035,9 +4220,14 @@ const ProductionOutputPage = ()=>{
                     <TD>{prod?.name||"—"}</TD>
                     <TD s={{fontWeight:700,color:C.success}}>+{o.quantity} {prod?.unit||""}</TD>
                     <TD s={{color:C.dim,fontSize:12,maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{o.comment||"—"}</TD>
-                    <TD><div style={{display:"flex",gap:4}}>
-                      <Btn v="ghost" sz="sm" onClick={()=>openEdit(o)} icon={<I.edit size={14}/>}/>
-                      <Btn v="ghost" sz="sm" onClick={()=>setConfirm({title:"Удалить выпуск?",message:`Удалить запись "${prod?.name} x${o.quantity}"? Остаток склада будет скорректирован.`,onConfirm:()=>doDelete(o)})} icon={<I.trash size={14}/>}/>
+                    <TD><div style={{display:"flex",gap:4,alignItems:"center"}}>
+                      {o.source==="task"
+                        ? <span style={{fontSize:11,color:C.dim,padding:"3px 7px",background:C.surface2,borderRadius:5,border:`1px solid ${C.border}`}} title="Создан при завершении задания — редактирование через страницу Задания">#{o.taskId}</span>
+                        : !isWorker&&<>
+                            <Btn v="ghost" sz="sm" onClick={()=>openEdit(o)} icon={<I.edit size={14}/>}/>
+                            <Btn v="ghost" sz="sm" onClick={()=>setConfirm({title:"Удалить выпуск?",message:`Удалить запись "${prod?.name} x${o.quantity}"? Остаток склада будет скорректирован.`,onConfirm:()=>doDelete(o)})} icon={<I.trash size={14}/>}/>
+                          </>
+                      }
                     </div></TD>
                   </tr>
                 );
@@ -4541,8 +4731,8 @@ const OrdersBoardStandalone=()=>{
       setSyncing(true);
       try{
         const [o,p]=await Promise.all([
-          fetch("/api/state/dk_client_orders").then(r=>r.ok?r.json():null),
-          fetch("/api/state/dk_products").then(r=>r.ok?r.json():null),
+          fetch("/api/board/orders").then(r=>r.ok?r.json():null),
+          fetch("/api/board/products").then(r=>r.ok?r.json():null),
         ]);
         if(Array.isArray(o)) setOrders(o);
         if(Array.isArray(p)) setProducts(p);
@@ -4642,53 +4832,382 @@ const OrdersBoardPage=()=>{
 };
 
 // ═══════════════════════════════════════════════════════════════
+// BATCHES PAGE — Партии продукции
+// ═══════════════════════════════════════════════════════════════
+const BatchesPage = ()=>{
+  const {batches,setBatches,products,currentUser,addLog}=useContext(AppContext);
+  const role=ROLES.find(r=>r.id===currentUser.roleId);
+  const isAdmin=role?.name==="admin"||role?.name==="owner";
+  const [fStatus,setFStatus]=useState("all");
+  const [fProduct,setFProduct]=useState("all");
+  const [confirm,setConfirm]=useState(null);
+  const [toast,setToast]=useState(null);
+
+  const now=new Date();
+  const filtered=useMemo(()=>{
+    let l=[...(batches||[])];
+    if(fStatus!=="all") l=l.filter(b=>b.status===fStatus);
+    if(fProduct!=="all") l=l.filter(b=>b.productId===+fProduct);
+    return l.sort((a,b)=>new Date(b.producedAt)-new Date(a.producedAt));
+  },[batches,fStatus,fProduct]);
+
+  const daysLeft=(expiresAt)=>{
+    if(!expiresAt) return null;
+    return Math.ceil((new Date(expiresAt)-now)/(86400000));
+  };
+  const expiryColor=(days)=>{
+    if(days===null) return "info";
+    if(days<0) return "danger";
+    if(days<=3) return "danger";
+    if(days<=7) return "orange";
+    return "success";
+  };
+
+  const writeOff=(b)=>{
+    setBatches(p=>p.map(x=>x.id===b.id?{...x,status:"списана",updatedAt:new Date().toISOString()}:x));
+    const p=products.find(x=>x.id===b.productId);
+    addLog(`Списана партия: ${p?.name||"?"} ${b.quantity}ед.`);
+    setToast({message:"Партия списана",type:"success"});
+    setConfirm(null);
+  };
+
+  const active=(batches||[]).filter(b=>b.status==="активна");
+  const expiringSoon=active.filter(b=>daysLeft(b.expiresAt)!==null&&daysLeft(b.expiresAt)<=3);
+  const totalActive=active.reduce((s,b)=>s+b.quantity,0);
+
+  return(
+    <div>
+      <PageH title="Партии продукции">
+        <select value={fProduct} onChange={e=>setFProduct(e.target.value)} style={{padding:"7px 9px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,fontSize:12,fontFamily:"inherit"}}>
+          <option value="all">Все товары</option>
+          {(products||[]).filter(p=>!p.deleted).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        <select value={fStatus} onChange={e=>setFStatus(e.target.value)} style={{padding:"7px 9px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,fontSize:12,fontFamily:"inherit"}}>
+          <option value="all">Все статусы</option>
+          {BATCH_STATUSES.map(s=><option key={s} value={s}>{s}</option>)}
+        </select>
+      </PageH>
+
+      <div style={{display:"flex",flexWrap:"wrap",gap:12,marginBottom:16}}>
+        <Stat icon={<I.box size={18}/>} label="Активных партий" value={active.length} color={C.info}/>
+        <Stat icon={<I.chart size={18}/>} label="Ед. в обороте" value={totalActive} color={C.success}/>
+        {expiringSoon.length>0&&<Stat icon={<I.alert size={18}/>} label="Истекает ≤ 3 дней" value={expiringSoon.length} color={C.danger}/>}
+      </div>
+
+      <div style={{display:"grid",gap:8}}>
+        {filtered.map(b=>{
+          const prod=products.find(p=>p.id===b.productId);
+          const days=daysLeft(b.expiresAt);
+          const clr=b.status==="активна"?expiryColor(days):(b.status==="списана"?"danger":"muted");
+          return(
+            <Card key={b.id} s={{borderLeft:`3px solid ${C[clr]||C.border}`,opacity:b.status!=="активна"?0.7:1}}>
+              <div style={{display:"flex",flexWrap:"wrap",gap:12,alignItems:"center"}}>
+                <div style={{flex:"1 1 180px"}}>
+                  <div style={{fontSize:14,fontWeight:700,color:C.text}}>{prod?.name||"—"}</div>
+                  <div style={{fontSize:11,color:C.dim}}>Произведено: {fmtShort(b.producedAt)}{b.expiresAt&&` · Годен до: ${fmtShort(b.expiresAt)}`}</div>
+                  {b.note&&<div style={{fontSize:11,color:C.dim,fontStyle:"italic"}}>{b.note}</div>}
+                </div>
+                <div style={{textAlign:"center",minWidth:60}}>
+                  <div style={{fontSize:20,fontWeight:800,color:C.text}}>{b.quantity}</div>
+                  <div style={{fontSize:10,color:C.dim}}>ед.</div>
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:8}}>
+                  <Badge color={clr==="muted"?"info":clr} s={{fontSize:10}}>{b.status}</Badge>
+                  {days!==null&&b.status==="активна"&&(
+                    <Badge color={expiryColor(days)} s={{fontSize:10}}>
+                      {days<0?`просрочено ${-days}д`:days===0?"истекает сегодня":`${days}д`}
+                    </Badge>
+                  )}
+                  {isAdmin&&b.status==="активна"&&(
+                    <Btn v="ghost" sz="sm" onClick={()=>setConfirm({title:"Списать партию?",message:`${prod?.name||"?"} — ${b.quantity} ед.`,onConfirm:()=>writeOff(b)})} icon={<I.trash size={13}/>}/>
+                  )}
+                </div>
+              </div>
+            </Card>
+          );
+        })}
+        {filtered.length===0&&<div style={{textAlign:"center",padding:50,color:C.dim}}>Нет партий по выбранным фильтрам</div>}
+      </div>
+
+      {confirm&&<Confirm open={!!confirm} onClose={()=>setConfirm(null)} title={confirm.title} message={confirm.message} onConfirm={confirm.onConfirm}/>}
+      {toast&&<Toast {...toast} onClose={()=>setToast(null)}/>}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════
+// DEFECTS PAGE — Брак и списания
+// ═══════════════════════════════════════════════════════════════
+const DefectsPage = ()=>{
+  const {defects,setDefects,users,products,setProducts,batches,setBatches,inventoryMovements,setInventoryMovements,currentUser,addLog}=useContext(AppContext);
+  const role=ROLES.find(r=>r.id===currentUser.roleId);
+  const isAdmin=role?.name==="admin"||role?.name==="owner";
+  const workers=users.filter(u=>u.status==="active"&&u.roleId===3);
+  const ap=products.filter(p=>!p.deleted);
+
+  const [modal,setModal]=useState(false);
+  const [confirm,setConfirm]=useState(null);
+  const [toast,setToast]=useState(null);
+  const [fEmp,setFEmp]=useState("all");
+  const [fProd,setFProd]=useState("all");
+  const [errs,setErrs]=useState({});
+
+  const emptyForm={employeeId:"",productId:"",batchId:"",quantity:"",reason:"",affectsStock:true,date:new Date().toISOString().slice(0,10),comment:""};
+  const [form,setForm]=useState(emptyForm);
+
+  const filtered=useMemo(()=>{
+    let l=[...(defects||[])];
+    if(fEmp!=="all") l=l.filter(d=>d.employeeId===+fEmp);
+    if(fProd!=="all") l=l.filter(d=>d.productId===+fProd);
+    return l.sort((a,b)=>new Date(b.createdAt)-new Date(a.createdAt));
+  },[defects,fEmp,fProd]);
+
+  const totalQtyStocked=filtered.filter(d=>d.affectsStock).reduce((s,d)=>s+d.quantity,0);
+  const totalQtyAll=filtered.reduce((s,d)=>s+d.quantity,0);
+
+  const validate=()=>{
+    const e={};
+    if(!form.productId) e.productId="!";
+    if(!form.quantity||+form.quantity<=0) e.quantity="> 0";
+    if(!form.reason) e.reason="!";
+    setErrs(e);return!Object.keys(e).length;
+  };
+
+  const save=()=>{
+    if(!validate()) return;
+    const now=new Date().toISOString();
+    const id=Date.now();
+    const qty=+form.quantity;
+    const prodId=+form.productId;
+    const batchId=form.batchId?+form.batchId:null;
+    const prod=ap.find(p=>p.id===prodId);
+    const emp=form.employeeId?users.find(u=>u.id===+form.employeeId):null;
+    const affectsStock=!!form.affectsStock;
+
+    setDefects(p=>[...(p||[]),{id,employeeId:form.employeeId?+form.employeeId:null,productId:prodId,batchId,quantity:qty,reason:form.reason,affectsStock,date:form.date,comment:form.comment,createdBy:currentUser.id,createdAt:now}]);
+
+    if(affectsStock){
+      // Deduct from product stock
+      setProducts(p=>p.map(x=>x.id===prodId?{...x,stock:Math.max(0,x.stock-qty),updatedAt:now}:x));
+      // Create write-off movement
+      setInventoryMovements(p=>[...(p||[]),{id:id+0.1,productId:prodId,type:"списание-брак",quantity:qty,balance:0,refId:`defect-${id}`,createdAt:now}]);
+      // Deduct from batch if specified
+      if(batchId){
+        setBatches(p=>(p||[]).map(b=>{
+          if(b.id!==batchId) return b;
+          const nq=Math.max(0,b.quantity-qty);
+          return{...b,quantity:nq,status:nq<=0?"списана":b.status,updatedAt:now};
+        }));
+      }
+    }
+
+    addLog(`Брак${affectsStock?" (со склада)":""}: ${prod?.name||"?"} ${qty}ед.${emp?" — "+emp.name.split(" ")[0]:""}`);
+    setToast({message:affectsStock?"Брак записан, склад скорректирован":"Брак записан (без списания)",type:"success"});
+    setModal(false);setForm(emptyForm);setErrs({});
+  };
+
+  const doDelete=d=>{
+    setDefects(p=>(p||[]).filter(x=>x.id!==d.id));
+    const prod=ap.find(p=>p.id===d.productId);
+    addLog(`Удалён брак: ${prod?.name||"?"}`);
+    setToast({message:"Удалено",type:"error"});
+    setConfirm(null);
+  };
+
+  const prodBatches=(form.productId?(batches||[]).filter(b=>b.productId===+form.productId&&b.status==="активна"):[]);
+  const selStyle={padding:"7px 9px",background:C.bg,border:`1px solid ${C.border}`,borderRadius:7,color:C.text,fontSize:12,fontFamily:"inherit"};
+
+  return(
+    <div>
+      <PageH title="Брак и списания">
+        <select value={fEmp} onChange={e=>setFEmp(e.target.value)} style={selStyle}>
+          <option value="all">Все сотрудники</option>
+          {workers.map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
+        </select>
+        <select value={fProd} onChange={e=>setFProd(e.target.value)} style={selStyle}>
+          <option value="all">Все товары</option>
+          {ap.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+        </select>
+        {isAdmin&&<Btn onClick={()=>{setForm(emptyForm);setErrs({});setModal(true)}} icon={<I.plus size={15}/>}>Записать брак</Btn>}
+      </PageH>
+
+      <div style={{display:"flex",flexWrap:"wrap",gap:12,marginBottom:16}}>
+        <Stat icon={<I.alert size={18}/>} label="Всего записей" value={(defects||[]).length} color={C.orange}/>
+        <Stat icon={<I.trash size={18}/>} label="Ед. брака (фильтр)" value={totalQtyAll} color={C.danger}/>
+        {totalQtyStocked>0&&<Stat icon={<I.box size={18}/>} label="Списано со склада" value={totalQtyStocked} color={C.danger}/>}
+      </div>
+
+      <div style={{display:"grid",gap:8}}>
+        {filtered.map(d=>{
+          const prod=ap.find(p=>p.id===d.productId);
+          const emp=d.employeeId?users.find(u=>u.id===d.employeeId):null;
+          const batch=d.batchId?(batches||[]).find(b=>b.id===d.batchId):null;
+          return(
+            <Card key={d.id} s={{borderLeft:`3px solid ${d.affectsStock?C.danger:C.orange}`}}>
+              <div style={{display:"flex",flexWrap:"wrap",gap:12,alignItems:"center"}}>
+                <div style={{flex:"1 1 200px"}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:3}}>
+                    <span style={{fontSize:14,fontWeight:700,color:C.text}}>{prod?.name||"—"}</span>
+                    <Badge color="danger" s={{fontSize:10}}>{d.reason}</Badge>
+                    {d.affectsStock
+                      ?<Badge color="danger" s={{fontSize:9}}>склад−</Badge>
+                      :<Badge color="orange" s={{fontSize:9}}>только журнал</Badge>}
+                  </div>
+                  {emp&&<div style={{fontSize:12,color:C.muted}}>Сотрудник: {emp.name}</div>}
+                  <div style={{fontSize:11,color:C.dim}}>{fmtShort(d.date)}{batch&&` · Партия ${batch.quantity>0?batch.quantity+"ед.":""}`}</div>
+                  {d.comment&&<div style={{fontSize:11,color:C.dim,fontStyle:"italic"}}>{d.comment}</div>}
+                </div>
+                <div style={{textAlign:"center",minWidth:60}}>
+                  <div style={{fontSize:20,fontWeight:800,color:d.affectsStock?C.danger:C.orange}}>{d.quantity}</div>
+                  <div style={{fontSize:10,color:C.dim}}>ед.</div>
+                </div>
+                {isAdmin&&<Btn v="ghost" sz="sm" onClick={()=>setConfirm({title:"Удалить запись?",message:`${prod?.name||"?"} — ${d.quantity} ед.`,onConfirm:()=>doDelete(d)})} icon={<I.trash size={13}/>}/>}
+              </div>
+            </Card>
+          );
+        })}
+        {filtered.length===0&&<div style={{textAlign:"center",padding:50,color:C.dim}}>Нет записей о браке</div>}
+      </div>
+
+      <Modal open={modal} onClose={()=>setModal(false)} title="Записать брак" width={460}>
+        <Sel label="Товар" value={form.productId} onChange={e=>setForm({...form,productId:e.target.value,batchId:""})} error={errs.productId} options={[{value:"",label:"Выберите"},...ap.map(p=>({value:p.id,label:p.name}))]}/>
+        {prodBatches.length>0&&(
+          <Sel label="Партия" value={form.batchId} onChange={e=>setForm({...form,batchId:e.target.value})} options={[{value:"",label:"Не указана"},...prodBatches.map(b=>({value:b.id,label:`#${b.id} — ${b.quantity}ед. от ${fmtShort(b.producedAt)}`}))]}/>
+        )}
+        <Sel label="Сотрудник" value={form.employeeId} onChange={e=>setForm({...form,employeeId:e.target.value})} options={[{value:"",label:"Не указан"},...workers.map(w=>({value:w.id,label:w.name}))]}/>
+        <Inp label="Количество (ед.)" type="number" min="1" value={form.quantity} onChange={e=>setForm({...form,quantity:e.target.value})} error={errs.quantity}/>
+        <Sel label="Причина" value={form.reason} onChange={e=>setForm({...form,reason:e.target.value})} error={errs.reason} options={[{value:"",label:"Выберите"},...DEFECT_REASONS.map(r=>({value:r,label:r}))]}/>
+        <Inp label="Дата" type="date" value={form.date} onChange={e=>setForm({...form,date:e.target.value})}/>
+        <Txa label="Комментарий" value={form.comment} onChange={e=>setForm({...form,comment:e.target.value})}/>
+        <div style={{display:"flex",alignItems:"center",gap:10,marginTop:8,padding:"10px 12px",background:form.affectsStock?C.dangerBg:C.bg,borderRadius:8,border:`1px solid ${form.affectsStock?C.danger+"30":C.border}`}}>
+          <input type="checkbox" id="affectsStockChk" checked={!!form.affectsStock} onChange={e=>setForm({...form,affectsStock:e.target.checked})} style={{accentColor:C.danger,cursor:"pointer",width:16,height:16}}/>
+          <label htmlFor="affectsStockChk" style={{fontSize:13,color:form.affectsStock?C.danger:C.muted,cursor:"pointer",fontFamily:"inherit",fontWeight:600}}>
+            Списать со склада (уменьшить остаток товара)
+          </label>
+        </div>
+        <div style={{display:"flex",gap:8,justifyContent:"flex-end",marginTop:10}}>
+          <Btn v="secondary" onClick={()=>setModal(false)}>Отмена</Btn>
+          <Btn v="danger" onClick={save}>Записать</Btn>
+        </div>
+      </Modal>
+
+      {confirm&&<Confirm open={!!confirm} onClose={()=>setConfirm(null)} title={confirm.title} message={confirm.message} onConfirm={confirm.onConfirm}/>}
+      {toast&&<Toast {...toast} onClose={()=>setToast(null)}/>}
+    </div>
+  );
+};
+
+// ═══════════════════════════════════════════════════════════════
 // MAIN APP
 // ═══════════════════════════════════════════════════════════════
 export default function App(){
-  const [currentUser,setCurrentUser]=useState(null);
-  const [users,setUsers]=useState(INIT_USERS);
-  const [products,setProducts]=usePersisted("dk_products",INIT_PRODUCTS);
-  const [tasks,setTasks]=useState(INIT_TASKS);
-  const [rawMaterials,setRawMaterials]=useState(INIT_RAW_MATERIALS);
-  const [recipes,setRecipes]=useState(INIT_RECIPES);
-  const [taskEmployees,setTaskEmployees]=usePersisted("dk_task_emps",INIT_TASK_EMPLOYEES);
-  const [employeeHistory,setEmployeeHistory]=usePersisted("dk_emp_hist",INIT_EMPLOYEE_HISTORY);
-  const [productionPlans,setProductionPlans]=usePersisted("dk_prod_plans",INIT_PRODUCTION_PLANS);
-  const [clients,setClients]=useState(INIT_CLIENTS);
+  // Session is server-side. On mount we check /api/auth/me to restore the session.
+  // localStorage only stores {id, name, roleId} as a UI hint to avoid flicker — never password.
+  const [currentUser,setCurrentUser]=useState(()=>{
+    try{const s=localStorage.getItem("dk_session_hint");return s?JSON.parse(s):null;}catch{return null;}
+  });
+  const [sessionChecked,setSessionChecked]=useState(false);
+  // Check session on mount and every 2 minutes.
+  // This catches: role changes, account blocking, session expiry.
+  useEffect(()=>{
+    let mounted=true;
+    const checkMe=()=>{
+      fetch("/api/auth/me")
+        .then(r=>r.ok?r.json():null)
+        .then(user=>{
+          if(!mounted) return;
+          if(user){
+            const hint={id:user.id,name:user.name,roleId:user.roleId};
+            localStorage.setItem("dk_session_hint",JSON.stringify(hint));
+            setCurrentUser(prev=>{
+              // Only update if something actually changed (prevents re-renders)
+              if(!prev||prev.id!==user.id||prev.roleId!==user.roleId||prev.status!==user.status) return user;
+              return prev;
+            });
+          } else {
+            localStorage.removeItem("dk_session_hint");
+            setCurrentUser(null);
+          }
+        })
+        .catch(()=>{/* server offline — keep current state */})
+        .finally(()=>{if(mounted) setSessionChecked(true);});
+    };
+    checkMe();
+    const t=setInterval(checkMe,2*60*1000); // re-check every 2 min
+    return()=>{mounted=false;clearInterval(t);};
+  },[]);
+  const [users,setUsers]=usePersisted("dk_users",INIT_USERS);
+  const [products,setProducts,setProductsL]=usePersisted("dk_products",INIT_PRODUCTS);
+  const [tasks,setTasks,setTasksL]=usePersisted("dk_tasks",INIT_TASKS);
+  const [rawMaterials,setRawMaterials,setRawMatsL]=usePersisted("dk_raw_mats",INIT_RAW_MATERIALS);
+  const [recipes,setRecipes]=usePersisted("dk_recipes",INIT_RECIPES);
+  const [taskEmployees,setTaskEmployees,setTaskEmpL]=usePersisted("dk_task_emps",INIT_TASK_EMPLOYEES);
+  const [employeeHistory,setEmployeeHistory,setEmpHistL]=usePersisted("dk_emp_hist",INIT_EMPLOYEE_HISTORY);
+  const [productionPlans,setProductionPlans,setPlansL]=usePersisted("dk_prod_plans",INIT_PRODUCTION_PLANS);
+  const [clients,setClients]=usePersisted("dk_clients",INIT_CLIENTS);
   const [clientOrders,setClientOrders]=usePersisted("dk_client_orders",INIT_CLIENT_ORDERS);
-  const [sales,setSales]=useState(INIT_SALES);
-  const [inventoryMovements,setInventoryMovements]=usePersisted("dk_inv_move",INIT_INVENTORY_MOVEMENTS);
-  const [productionOutputs,setProductionOutputs]=usePersisted("dk_prod_outputs",INIT_PRODUCTION_OUTPUTS);
+  const [sales,setSales]=usePersisted("dk_sales",INIT_SALES);
+  const [inventoryMovements,setInventoryMovements,setInvMoveL]=usePersisted("dk_inv_move",INIT_INVENTORY_MOVEMENTS);
+  const [productionOutputs,setProductionOutputs,setOutputsL]=usePersisted("dk_prod_outputs",INIT_PRODUCTION_OUTPUTS);
   const [bonusRules,setBonusRules]=usePersisted("dk_bonus_rules",INIT_BONUS_RULES);
   const [baseSalaries,setBaseSalaries]=usePersisted("dk_base_salaries",INIT_BASE_SALARIES);
   const [debts,setDebts]=usePersisted("dk_debts",INIT_DEBTS);
+  const [batches,setBatches,setBatchesL]=usePersisted("dk_batches",INIT_BATCHES);
+  const [defects,setDefects]=usePersisted("dk_defects",INIT_DEFECTS);
+  const [payrollRecords,setPayrollRecords]=usePersisted("dk_payroll",[]);
   const [cameras,setCameras]=useLocalStorage("dk_cameras",INIT_CAMERAS);
-  const [suppliers,setSuppliers]=useState(INIT_SUPPLIERS);
-  const [deliveries,setDeliveries]=useState(INIT_DELIVERIES);
-  const [rawMovements,setRawMovements]=useState(INIT_RAW_MOVEMENTS);
-  const [notifications,setNotifications]=useState(INIT_NOTIFICATIONS);
-  const [marks,setMarks]=useState(INIT_MARKS);
-  const [logs,setLogs]=useState([
-    {id:1,userId:1,userName:"Иванов И.И.",message:"Система запущена",date:"2024-06-01T08:00:00"},
-  ]);
+  const [suppliers,setSuppliers]=usePersisted("dk_suppliers",INIT_SUPPLIERS);
+  const [deliveries,setDeliveries]=usePersisted("dk_deliveries",INIT_DELIVERIES);
+  const [rawMovements,setRawMovements,setRawMovsL]=usePersisted("dk_raw_movements",INIT_RAW_MOVEMENTS);
+  const [notifications,setNotifications,setNotifsL]=usePersisted("dk_notifications",INIT_NOTIFICATIONS);
+  const [marks,setMarks]=usePersisted("dk_marks",INIT_MARKS);
+  const [logs,setLogs,setLogsL]=usePersisted("dk_logs",[]);
   const [page,setPage]=useState("dashboard");
   const [sideOpen,setSideOpen]=useState(false);
   const [openGroups,setOpenGroups]=useState(()=>new Set(["main"]));
   const [hiddenWarnings,setHiddenWarnings]=useState(new Set());
   const [isMobile,setIsMobile]=useState(()=>typeof window!=="undefined"&&window.innerWidth<=768);
   const [serverOnline,setServerOnline]=useState(true);
+  const [saveError,setSaveError]=useState(null); // {key,status,ts}
   useEffect(()=>{
     const check=()=>{fetch("/api/ping",{cache:"no-store"}).then(()=>setServerOnline(true)).catch(()=>setServerOnline(false))};
     check();const t=setInterval(check,15000);return()=>clearInterval(t);
   },[]);
+  // Toast auto-dismiss for write errors
+  useEffect(()=>{
+    if(!saveError) return;
+    const t=setTimeout(()=>setSaveError(null),4000);
+    return()=>clearTimeout(t);
+  },[saveError]);
   useEffect(()=>{
     const h=()=>setIsMobile(window.innerWidth<=768);
     window.addEventListener("resize",h);return()=>window.removeEventListener("resize",h);
   },[]);
 
+  // Applies state returned by action endpoints directly to local React state,
+  // without triggering server POSTs. Prevents 403 on manager-only keys for workers.
+  const applyServerState=useCallback((state)=>{
+    if(state.dk_tasks)          setTasksL(state.dk_tasks);
+    if(state.dk_task_emps)      setTaskEmpL(state.dk_task_emps);
+    if(state.dk_prod_outputs)   setOutputsL(state.dk_prod_outputs);
+    if(state.dk_batches)        setBatchesL(state.dk_batches);
+    if(state.dk_products)       setProductsL(state.dk_products);
+    if(state.dk_raw_mats)       setRawMatsL(state.dk_raw_mats);
+    if(state.dk_raw_movements)  setRawMovsL(state.dk_raw_movements);
+    if(state.dk_inv_move)       setInvMoveL(state.dk_inv_move);
+    if(state.dk_emp_hist)       setEmpHistL(state.dk_emp_hist);
+    if(state.dk_prod_plans)     setPlansL(state.dk_prod_plans);
+    if(state.dk_notifications)  setNotifsL(state.dk_notifications);
+    if(state.dk_logs)           setLogsL(state.dk_logs);
+  },[setTasksL,setTaskEmpL,setOutputsL,setBatchesL,setProductsL,setRawMatsL,setRawMovsL,setInvMoveL,setEmpHistL,setPlansL,setNotifsL,setLogsL]);
+
   const addLog=useCallback(msg=>{
     if(!currentUser) return;
-    setLogs(p=>[...p,{id:Date.now(),userId:currentUser.id,userName:currentUser.name.split(" ").map((n,i)=>i===0?n:n[0]+".").join(" "),message:msg,date:new Date().toISOString()}]);
+    apiFetch("/api/actions/log",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({message:String(msg)}),
+    }).catch(()=>{});
   },[currentUser]);
 
   const addNotification=useCallback((data)=>{
@@ -4705,8 +5224,103 @@ export default function App(){
     }]);
   },[currentUser]);
 
-  const handleLogin=u=>{setCurrentUser(u);setPage("dashboard");setTimeout(()=>{setLogs(p=>[...p,{id:Date.now(),userId:u.id,userName:u.name.split(" ").map((n,i)=>i===0?n:n[0]+".").join(" "),message:"Вход в систему",date:new Date().toISOString()}])},100)};
-  const handleLogout=()=>{if(currentUser)addLog("Выход");setCurrentUser(null);setPage("dashboard")};
+  // ── Single source of truth for production output ──
+  // Called by BOTH task completion and manual entry in ProductionOutputPage.
+  // Creates: stock+, inventoryMovements, rawMaterials-, rawMovements, employeeHistory, productionPlans, batch.
+  const applyOutput=useCallback((out,stockBefore)=>{
+    const newBalance=stockBefore+out.quantity;
+    setProducts(p=>p.map(x=>x.id===out.productId?{...x,stock:x.stock+out.quantity,updatedAt:new Date().toISOString()}:x));
+    setInventoryMovements(p=>[...(p||[]),{id:out.id+0.1,productId:out.productId,type:"output",quantity:out.quantity,balance:newBalance,refId:`output-${out.id}`,createdAt:out.date}]);
+    const recipe=recipes.find(r=>r.productId===out.productId);
+    if(recipe?.items?.length){
+      setRawMaterials(prev=>prev.map(rm=>{
+        const item=recipe.items.find(i=>i.rawId===rm.id);
+        if(!item) return rm;
+        return{...rm,stock:Math.max(0,+(rm.stock-item.qty*out.quantity).toFixed(4)),updatedAt:new Date().toISOString()};
+      }));
+      setRawMovements(prev=>[...(prev||[]),...recipe.items.map(item=>({
+        id:Date.now()+Math.random(),rawId:item.rawId,type:"расход",quantity:+(item.qty*out.quantity).toFixed(4),
+        refId:`output-${out.id}`,note:`Выпуск: ${out.quantity} ед. #${out.productId}`,createdAt:out.date
+      }))]);
+    }
+    const ds=out.date.slice(0,10);
+    setEmployeeHistory(p=>{
+      const ex=p.find(h=>h.employeeId===out.employeeId&&h.date===ds);
+      if(ex) return p.map(h=>h.id===ex.id?{...h,producedQty:h.producedQty+out.quantity}:h);
+      return[...p,{id:Date.now()+Math.random(),employeeId:out.employeeId,date:ds,attendance:"present",tasksCompleted:0,producedQty:out.quantity,comment:""}];
+    });
+    setProductionPlans(p=>p.map(pl=>{
+      if(pl.productId===out.productId&&pl.productionDate===ds&&pl.status!=="отменён"){
+        const nc=Math.min(pl.plannedQty,pl.completedQty+out.quantity);
+        return{...pl,completedQty:nc,status:nc>=pl.plannedQty?"выполнен":"в процессе"};
+      }return pl;
+    }));
+    // NOTE: batch is NOT created here. It is created once by the caller:
+    //   - doComplete creates 1 batch for the whole task (all workers summed)
+    //   - save() in ProductionOutputPage creates 1 batch for a manual entry
+    // This prevents N batches when N workers share one task.
+  },[recipes,setProducts,setInventoryMovements,setRawMaterials,setRawMovements,setEmployeeHistory,setProductionPlans]);
+
+  // Fully reverses an applyOutput call (stock, movements, raw, history, plans).
+  // For task-outputs: only the LAST worker's revert also removes the shared batch (via out.batchId).
+  // For manual outputs: out.batchId === out.id + 0.5.
+  const revertOutput=useCallback((out)=>{
+    setProducts(p=>p.map(x=>x.id===out.productId?{...x,stock:Math.max(0,x.stock-out.quantity),updatedAt:new Date().toISOString()}:x));
+    setInventoryMovements(p=>(p||[]).filter(m=>m.refId!==`output-${out.id}`));
+    const recipe=recipes.find(r=>r.productId===out.productId);
+    if(recipe?.items?.length){
+      setRawMaterials(prev=>prev.map(rm=>{
+        const item=recipe.items.find(i=>i.rawId===rm.id);
+        if(!item) return rm;
+        return{...rm,stock:+(rm.stock+item.qty*out.quantity).toFixed(4),updatedAt:new Date().toISOString()};
+      }));
+      setRawMovements(prev=>(prev||[]).filter(m=>m.refId!==`output-${out.id}`));
+    }
+    // Remove associated batch (each output carries batchId set at creation time)
+    if(out.batchId) setBatches(prev=>(prev||[]).filter(b=>b.id!==out.batchId));
+    const ds=out.date.slice(0,10);
+    setEmployeeHistory(p=>p.map(h=>h.employeeId===out.employeeId&&h.date===ds?{...h,producedQty:Math.max(0,h.producedQty-out.quantity)}:h));
+    setProductionPlans(p=>p.map(pl=>{
+      if(pl.productId===out.productId&&pl.productionDate===ds&&pl.status!=="отменён"){
+        const nc=Math.max(0,pl.completedQty-out.quantity);
+        return{...pl,completedQty:nc,status:nc>=pl.plannedQty?"выполнен":nc>0?"в процессе":"запланирован"};
+      }return pl;
+    }));
+  },[recipes,setProducts,setInventoryMovements,setRawMaterials,setRawMovements,setBatches,setEmployeeHistory,setProductionPlans]);
+
+  const handleLogin=u=>{
+    // Store only safe hint (no password) for UI restore on page reload
+    const hint={id:u.id,name:u.name,roleId:u.roleId};
+    localStorage.setItem("dk_session_hint",JSON.stringify(hint));
+    setCurrentUser(u);setPage("dashboard");
+    apiFetch("/api/actions/log",{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({message:"Вход в систему"}),
+    }).catch(()=>{});
+  };
+  const handleLogout=()=>{
+    if(currentUser)addLog("Выход");
+    fetch("/api/auth/logout",{method:"POST"}).catch(()=>{});
+    localStorage.removeItem("dk_session_hint");
+    setCurrentUser(null);setPage("dashboard");
+  };
+
+  // Register global 401 handler so any usePersisted 401 forces logout
+  useEffect(()=>{
+    setUnauthorizedHandler(()=>{
+      localStorage.removeItem("dk_session_hint");
+      setCurrentUser(null);setPage("dashboard");
+    });
+    return()=>setUnauthorizedHandler(null);
+  },[]);
+
+  // Register global write-error handler so any usePersisted save failure
+  // surfaces as a visible toast instead of silently rolling back on the next poll.
+  useEffect(()=>{
+    setWriteErrorHandler((info)=>setSaveError({...info,ts:Date.now()}));
+    return()=>setWriteErrorHandler(null);
+  },[]);
 
   const production = tasks.filter(t=>t.status==="завершено").map(t=>({id:t.id,productId:t.productId,userIds:t.userIds||[],quantity:t.quantity,date:t.completedAt,note:t.note}));
 
@@ -4717,14 +5331,17 @@ export default function App(){
     clients,setClients,clientOrders,setClientOrders,
     sales,setSales,inventoryMovements,setInventoryMovements,
     suppliers,setSuppliers,deliveries,setDeliveries,rawMovements,setRawMovements,
-    notifications,setNotifications,marks,setMarks,
+    notifications,setNotifications,setNotifsL,marks,setMarks,
     logs,setLogs,addLog,addNotification,currentUser,production,
     setPage,hiddenWarnings,setHiddenWarnings,
     productionOutputs,setProductionOutputs,
     bonusRules,setBonusRules,baseSalaries,setBaseSalaries,
     debts,setDebts,
+    batches,setBatches,defects,setDefects,
+    payrollRecords,setPayrollRecords,
     cameras,setCameras,
-  }),[users,products,tasks,rawMaterials,recipes,taskEmployees,employeeHistory,productionPlans,clients,clientOrders,sales,inventoryMovements,suppliers,deliveries,rawMovements,notifications,marks,logs,addLog,addNotification,currentUser,production,page,hiddenWarnings,productionOutputs,bonusRules,baseSalaries,debts,cameras]);
+    applyOutput,revertOutput,applyServerState,
+  }),[users,products,tasks,rawMaterials,recipes,taskEmployees,employeeHistory,productionPlans,clients,clientOrders,sales,inventoryMovements,suppliers,deliveries,rawMovements,notifications,marks,logs,addLog,addNotification,currentUser,production,page,hiddenWarnings,productionOutputs,bonusRules,baseSalaries,debts,batches,defects,payrollRecords,cameras,applyOutput,revertOutput,applyServerState]);
 
   const globalStyles = `
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans:wght@400;500;600;700;800&display=swap');
@@ -4749,6 +5366,11 @@ export default function App(){
     return <OrdersBoardStandalone/>;
   }
 
+  // While checking server session — show nothing to avoid login flash
+  if(!sessionChecked){
+    return <div style={{minHeight:"100vh",background:C.bg,display:"flex",alignItems:"center",justifyContent:"center"}}><style>{globalStyles}</style><div style={{color:C.dim,fontSize:13}}>...</div></div>;
+  }
+
   if(!currentUser) return(
     <AppContext.Provider value={ctx}><style>{globalStyles}</style><LoginPage onLogin={handleLogin}/></AppContext.Provider>
   );
@@ -4769,6 +5391,8 @@ export default function App(){
       {id:"products",label:"Товары",ok:true},
       {id:"prodOutput",label:"Выпуск",ok:true},
       {id:"planning",label:"Планирование",ok:isAdmin||isManager},
+      {id:"batches",label:"Партии",ok:isAdmin||isManager},
+      {id:"defects",label:"Брак",ok:isAdmin||isManager},
     ]},
     { id:"warehouse", label:"Склад", icon:I.warehouse, items:[
       {id:"raw",label:"Сырьё",ok:isAdmin||isManager},
@@ -4776,16 +5400,17 @@ export default function App(){
       {id:"procurement",label:"Закупки",ok:isAdmin||isManager},
     ]},
     { id:"sales", label:"Торговля", icon:I.truck, items:[
-      {id:"clients",label:"Клиенты",ok:isAdmin||isManager},
+      {id:"clients",label:"Магазины",ok:isAdmin||isManager},
       {id:"sales",label:"Продажи",ok:isAdmin||isManager},
       {id:"inventory",label:"Движение",ok:isAdmin||isManager},
       {id:"ordersBoard",label:"Доска заказов",ok:isAdmin||isManager},
+      {id:"debts",label:"Долги магазинов",ok:isAdmin||isManager},
     ]},
     { id:"staff", label:"Персонал", icon:I.people, items:[
       {id:"empstats",label:"KPI",ok:isAdmin||isManager},
-      {id:"salary",label:"Премии",ok:isAdmin||isManager},
+      {id:"salary",label:"Расчёт оплаты",ok:isAdmin||isManager},
       {id:"workerHistory",label:"История",ok:true},
-      {id:"marks",label:"Отметки",ok:true},
+      {id:"marks",label:"Посещаемость",ok:true},
       {id:"users",label:"Пользователи",ok:isAdmin},
     ]},
     { id:"analytics", label:"Аналитика", icon:I.analytics, items:[
@@ -4795,8 +5420,7 @@ export default function App(){
     ]},
     { id:"system", label:"Система", icon:I.gear, items:[
       {id:"notifications",label:"Уведомления",ok:true},
-      {id:"debts",label:isOwner?"Долги сотрудников":"Мои долги",ok:true},
-      {id:"cameras",label:"Камеры",ok:true},
+      {id:"cameras",label:"Камеры",ok:isAdmin||isManager},
     ]},
   ].map(g=>({...g,items:g.items.filter(i=>i.ok)})).filter(g=>g.items.length>0);
 
@@ -4828,6 +5452,8 @@ export default function App(){
       case "products":return <ProductsPage/>;
       case "prodOutput":return <ProductionOutputPage/>;
       case "planning":return(isAdmin||isManager)?<ProductionPlanPage/>:<DashboardPage/>;
+      case "batches":return(isAdmin||isManager)?<BatchesPage/>:<DashboardPage/>;
+      case "defects":return(isAdmin||isManager)?<DefectsPage/>:<DashboardPage/>;
       case "raw":return(isAdmin||isManager)?<RawMaterialsPage/>:<DashboardPage/>;
       case "deliveries":return(isAdmin||isManager)?<DeliveriesPage/>:<DashboardPage/>;
       case "procurement":return(isAdmin||isManager)?<ProcurementPage/>:<DashboardPage/>;
@@ -4836,7 +5462,7 @@ export default function App(){
       case "inventory":return(isAdmin||isManager)?<InventoryJournalPage/>:<DashboardPage/>;
       case "ordersBoard":return(isAdmin||isManager)?<OrdersBoardPage/>:<DashboardPage/>;
       case "empstats":return(isAdmin||isManager)?<EmployeeStatsPage/>:<DashboardPage/>;
-      case "salary":return(isAdmin||isManager)?<SalaryStatsPage/>:<DashboardPage/>;
+      case "salary":return(isAdmin||isManager)?<PayrollPage/>:<DashboardPage/>;
       case "workerHistory":return <WorkerHistoryPage/>;
       case "notifications":return <NotificationsPage/>;
       case "debts":return <DebtsPage/>;
@@ -4856,6 +5482,7 @@ export default function App(){
 
       {sideOpen&&<div onClick={()=>setSideOpen(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",zIndex:998}}/>}
       {!serverOnline&&<div style={{position:"fixed",top:0,left:0,right:0,zIndex:1001,background:C.danger,color:"#fff",padding:"5px 16px",fontSize:12,fontWeight:600,textAlign:"center",letterSpacing:.3}}>Нет соединения с сервером — изменения не сохраняются</div>}
+      {saveError&&serverOnline&&<div style={{position:"fixed",top:serverOnline?0:26,left:0,right:0,zIndex:1001,background:C.danger,color:"#fff",padding:"5px 16px",fontSize:12,fontWeight:600,textAlign:"center",letterSpacing:.3}}>Изменение не сохранено{saveError.status?` (${saveError.status})`:""} — нет прав или ошибка сервера. Страница будет пересинхронизирована.</div>}
 
       <aside style={{position:"fixed",top:0,left:0,bottom:0,width:220,background:C.surface,borderRight:`1px solid ${C.border}`,display:"flex",flexDirection:"column",transition:"transform .3s",zIndex:999,transform:isMobile&&!sideOpen?"translateX(-100%)":"translateX(0)"}}>
         <div style={{padding:"16px 14px",borderBottom:`1px solid ${C.border}`}}>
