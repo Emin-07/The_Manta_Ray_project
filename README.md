@@ -117,4 +117,26 @@ node server.js   # сервер
 
 ## Стек
 
-React 19 · Vite · Recharts · Node.js · Express · SQLite · PM2
+React 19 · Vite · Recharts · Node.js · Express · SQLite (better-sqlite3 v12) · PM2
+
+---
+
+## Windows: ошибка native binding (better_sqlite3.node)
+
+Если при запуске видишь `Could not locate the bindings file ... better_sqlite3.node`:
+
+1. Останови все Node-процессы.
+2. Убедись что npm-скрипты не отключены:
+   ```
+   npm config set ignore-scripts false
+   ```
+3. Удали `node_modules` и `package-lock.json`.
+4. Запусти `npm install` — пересоберёт нативный бинарник.
+5. Если ошибка повторяется, установи Visual Studio Build Tools:
+   `C:\Program Files\nodejs\install_tools.bat`
+   или скачай **Visual Studio Build Tools → Desktop development with C++**.
+6. Затем:
+   ```
+   npm rebuild better-sqlite3
+   npm run dev
+   ```

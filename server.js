@@ -935,6 +935,256 @@ app.get("/api/updates", (req, res) => {
   }
 });
 
+// ── ADMIN USER ENDPOINTS ──
+// Only admin (roleId 1) or owner (roleId 4) can access.
+
+function requireAdmin(req, res, next) {
+  if (!req.session?.userId) return res.status(401).json({ error: "Не авторизован" });
+  if (roleLevel(req.session.roleId) !== "admin") return res.status(403).json({ error: "Только для администратора" });
+  next();
+}
+
+// Sanitize user for client — strip password
+function sanitizeUser(u) {
+  const { password: _pw, ...safe } = u;
+  return safe;
+}
+
+// POST /api/admin/users — create user
+app.post("/api/admin/users", requireAdmin, (req, res) => {
+  try {
+    const { firstName, lastName, email, password, roleId, jobTitle, payType, dailyNorm, pieceRate, fixedDayRate, comment, birthDate, phone, experienceYears, experienceMonths, noExperience } = req.body;
+    if (!email || !password || password.length < 4) return res.status(400).json({ error: "email и пароль (мин. 4 символа) обязательны" });
+    if (!firstName && !lastName && !req.body.name) return res.status(400).json({ error: "Имя обязательно" });
+
+    const result = db.transaction(() => {
+      const users = readState("dk_users") || [];
+      if (users.some(u => u.email === email)) throw { status: 409, message: "Email уже занят" };
+
+      const expYears = noExperience ? 0 : (+experienceYears || 0);
+      const expMonths = noExperience ? 0 : (+experienceMonths || 0);
+      const now = new Date().toISOString();
+      const newUser = {
+        id: Date.now(),
+        firstName: firstName || "",
+        lastName: lastName || "",
+        name: req.body.name || `${firstName || ""} ${lastName || ""}`.trim(),
+        birthDate: birthDate || "",
+        phone: phone || "",
+        email,
+        emailVerified: true,
+        roleId: +roleId || 3,
+        status: "active",
+        jobTitle: jobTitle || "другое",
+        noExperience: !!noExperience,
+        experienceYears: expYears,
+        experienceMonths: expMonths,
+        experienceMonthsTotal: expYears * 12 + expMonths,
+        payType: payType || "фиксированная",
+        dailyNorm: +dailyNorm || 0,
+        pieceRate: +pieceRate || 0,
+        fixedDayRate: +fixedDayRate || 0,
+        comment: comment || "",
+        password: hashPassword(password),
+        createdAt: now,
+        updatedAt: now,
+      };
+      const updated = [...users, newUser];
+      writeState("dk_users", updated);
+
+      const logs = readState("dk_logs") || [];
+      const actor = users.find(u => u.id === req.session.userId);
+      const actorName = actor?.name?.split(" ").slice(0, 2).join(" ") || "Админ";
+      writeState("dk_logs", [...logs, { id: Date.now() + Math.random(), userId: req.session.userId, userName: actorName, message: `Создан пользователь: ${newUser.name} (${newUser.email})`, date: now }]);
+
+      return sanitizeUser(newUser);
+    })();
+    res.json({ ok: true, user: result });
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    console.error("[admin/users POST]", e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// PATCH /api/admin/users/:id — update user fields (not password)
+app.patch("/api/admin/users/:id", requireAdmin, (req, res) => {
+  try {
+    const userId = +req.params.id;
+    const result = db.transaction(() => {
+      const users = readState("dk_users") || [];
+      const idx = users.findIndex(u => u.id === userId);
+      if (idx === -1) throw { status: 404, message: "Пользователь не найден" };
+
+      const { password: _pw, ...allowed } = req.body; // never allow password update here
+      const expYears = allowed.noExperience ? 0 : (allowed.experienceYears !== undefined ? +allowed.experienceYears : users[idx].experienceYears);
+      const expMonths = allowed.noExperience ? 0 : (allowed.experienceMonths !== undefined ? +allowed.experienceMonths : users[idx].experienceMonths);
+
+      const updated = { ...users[idx], ...allowed, experienceYears: expYears, experienceMonths: expMonths, experienceMonthsTotal: expYears * 12 + expMonths, updatedAt: new Date().toISOString() };
+      if (updated.firstName || updated.lastName) {
+        updated.name = `${updated.firstName || ""} ${updated.lastName || ""}`.trim();
+      }
+      const newUsers = users.map((u, i) => i === idx ? updated : u);
+      writeState("dk_users", newUsers);
+      return sanitizeUser(updated);
+    })();
+    res.json({ ok: true, user: result });
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/admin/users/:id/password — change password
+app.post("/api/admin/users/:id/password", requireAdmin, (req, res) => {
+  try {
+    const userId = +req.params.id;
+    const { newPassword } = req.body;
+    if (!newPassword || newPassword.length < 4) return res.status(400).json({ error: "Пароль мин. 4 символа" });
+    db.transaction(() => {
+      const users = readState("dk_users") || [];
+      const idx = users.findIndex(u => u.id === userId);
+      if (idx === -1) throw { status: 404, message: "Пользователь не найден" };
+      users[idx] = { ...users[idx], password: hashPassword(newPassword), updatedAt: new Date().toISOString() };
+      writeState("dk_users", users);
+    })();
+    res.json({ ok: true });
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// POST /api/admin/users/:id/block — toggle block status
+app.post("/api/admin/users/:id/block", requireAdmin, (req, res) => {
+  try {
+    const userId = +req.params.id;
+    const { blocked, reason } = req.body;
+    const result = db.transaction(() => {
+      const users = readState("dk_users") || [];
+      const idx = users.findIndex(u => u.id === userId);
+      if (idx === -1) throw { status: 404, message: "Пользователь не найден" };
+      if (users[idx].id === req.session.userId) throw { status: 400, message: "Нельзя заблокировать себя" };
+      users[idx] = { ...users[idx], status: blocked ? "blocked" : "active", blockReason: blocked ? (reason || "") : "", updatedAt: new Date().toISOString() };
+      writeState("dk_users", users);
+      return sanitizeUser(users[idx]);
+    })();
+    res.json({ ok: true, user: result });
+  } catch (e) {
+    if (e.status) return res.status(e.status).json({ error: e.message });
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── BOOTSTRAP / SEED ──
+// Runs once at server start to ensure a fresh SQLite DB has working demo accounts.
+// Safe to run repeatedly — only writes keys that don't exist yet.
+function bootstrapState() {
+  console.log("[bootstrap] Checking state...");
+
+  // ── Demo users ──
+  const usersRow = db.prepare("SELECT value FROM state WHERE key = 'dk_users'").get();
+  if (!usersRow) {
+    const now = (suffix) => `2024-01-${suffix}T08:00:00.000Z`;
+    const demoUsers = [
+      { id:1,  firstName:"Акбар",   lastName:"Директоров", name:"Акбар Директоров",   birthDate:"1975-06-15", phone:"+7 900 111 0001", email:"director@factory.ru", emailVerified:true, roleId:1, status:"active", jobTitle:"менеджер цеха", noExperience:false, experienceYears:10, experienceMonths:0,  experienceMonthsTotal:120, payType:"фиксированная", dailyNorm:0,  pieceRate:0,  fixedDayRate:5000, comment:"Директор завода",         createdAt:now("01"), updatedAt:now("01"), password:hashPassword("director123") },
+      { id:2,  firstName:"Малика",  lastName:"Менеджерова",name:"Малика Менеджерова",  birthDate:"1985-03-20", phone:"+7 900 222 0002", email:"manager@factory.ru",  emailVerified:true, roleId:2, status:"active", jobTitle:"менеджер цеха", noExperience:false, experienceYears:5,  experienceMonths:3,  experienceMonthsTotal:63,  payType:"фиксированная", dailyNorm:0,  pieceRate:0,  fixedDayRate:3000, comment:"Менеджер производства",    createdAt:now("01"), updatedAt:now("01"), password:hashPassword("manager123") },
+      { id:3,  firstName:"Ибрагим", lastName:"Завода",     name:"Ибрагим Завода",      birthDate:"1970-01-10", phone:"+7 900 333 0003", email:"owner@factory.ru",    emailVerified:true, roleId:4, status:"active", jobTitle:"другое",        noExperience:false, experienceYears:20, experienceMonths:0,  experienceMonthsTotal:240, payType:"фиксированная", dailyNorm:0,  pieceRate:0,  fixedDayRate:0,    comment:"Владелец предприятия",    createdAt:now("01"), updatedAt:now("01"), password:hashPassword("owner123") },
+      { id:4,  firstName:"Зарина",  lastName:"Курбанова",  name:"Зарина Курбанова",    birthDate:"1998-04-15", phone:"+7 900 444 0004", email:"lep1@factory.ru",     emailVerified:true, roleId:3, status:"active", jobTitle:"лепщица",       noExperience:false, experienceYears:2,  experienceMonths:4,  experienceMonthsTotal:28,  payType:"сдельная",      dailyNorm:50, pieceRate:15, fixedDayRate:0,    comment:"Опытная лепщица",         createdAt:now("15"), updatedAt:now("15"), password:hashPassword("worker123") },
+      { id:5,  firstName:"Сабина",  lastName:"Алиева",     name:"Сабина Алиева",       birthDate:"2000-07-22", phone:"+7 900 555 0005", email:"lep2@factory.ru",     emailVerified:true, roleId:3, status:"active", jobTitle:"лепщица",       noExperience:false, experienceYears:1,  experienceMonths:8,  experienceMonthsTotal:20,  payType:"сдельная",      dailyNorm:50, pieceRate:15, fixedDayRate:0,    comment:"",                        createdAt:now("16"), updatedAt:now("16"), password:hashPassword("worker123") },
+      { id:6,  firstName:"Лейла",   lastName:"Магомедова", name:"Лейла Магомедова",    birthDate:"1995-11-10", phone:"+7 900 666 0006", email:"lep3@factory.ru",     emailVerified:true, roleId:3, status:"active", jobTitle:"лепщица",       noExperience:false, experienceYears:3,  experienceMonths:0,  experienceMonthsTotal:36,  payType:"сдельная",      dailyNorm:50, pieceRate:15, fixedDayRate:0,    comment:"",                        createdAt:now("17"), updatedAt:now("17"), password:hashPassword("worker123") },
+      { id:7,  firstName:"Айгуль",  lastName:"Рашидова",   name:"Айгуль Рашидова",     birthDate:"1999-09-05", phone:"+7 900 777 0007", email:"packer@factory.ru",   emailVerified:true, roleId:3, status:"active", jobTitle:"фасовщица",     noExperience:false, experienceYears:1,  experienceMonths:2,  experienceMonthsTotal:14,  payType:"сдельная",      dailyNorm:80, pieceRate:8,  fixedDayRate:0,    comment:"",                        createdAt:now("18"), updatedAt:now("18"), password:hashPassword("worker123") },
+      { id:8,  firstName:"Рустам",  lastName:"Каримов",    name:"Рустам Каримов",      birthDate:"1988-12-25", phone:"+7 900 888 0008", email:"courier@factory.ru",  emailVerified:true, roleId:3, status:"active", jobTitle:"курьер",        noExperience:false, experienceYears:4,  experienceMonths:6,  experienceMonthsTotal:54,  payType:"фиксированная", dailyNorm:0,  pieceRate:0,  fixedDayRate:1500, comment:"Курьер доставки",         createdAt:now("19"), updatedAt:now("19"), password:hashPassword("worker123") },
+      { id:9,  firstName:"Тимур",   lastName:"Исмаилов",   name:"Тимур Исмаилов",      birthDate:"1990-08-18", phone:"+7 900 999 0009", email:"tech@factory.ru",     emailVerified:true, roleId:3, status:"active", jobTitle:"технарь",       noExperience:false, experienceYears:6,  experienceMonths:0,  experienceMonthsTotal:72,  payType:"фиксированная", dailyNorm:0,  pieceRate:0,  fixedDayRate:2000, comment:"Технарь",                 createdAt:now("20"), updatedAt:now("20"), password:hashPassword("worker123") },
+      { id:10, firstName:"Назира",  lastName:"Юсупова",    name:"Назира Юсупова",      birthDate:"1993-02-28", phone:"+7 900 100 0010", email:"cleaner@factory.ru",  emailVerified:true, roleId:3, status:"active", jobTitle:"техничка",      noExperience:false, experienceYears:2,  experienceMonths:0,  experienceMonthsTotal:24,  payType:"фиксированная", dailyNorm:0,  pieceRate:0,  fixedDayRate:1200, comment:"Уборщица",                createdAt:now("21"), updatedAt:now("21"), password:hashPassword("worker123") },
+    ];
+    writeState("dk_users", demoUsers);
+    console.log(`[bootstrap] Seeded dk_users with ${demoUsers.length} demo accounts`);
+  } else {
+    // Migrate any __pending__ passwords that might be left from old frontend-created users
+    const users = JSON.parse(usersRow.value);
+    let changed = false;
+    const migrated = users.map(u => {
+      if (!u.password || u.password === "__pending__") {
+        changed = true;
+        return { ...u, password: hashPassword("changeme123") };
+      }
+      return u;
+    });
+    if (changed) {
+      writeState("dk_users", migrated);
+      console.log("[bootstrap] Migrated __pending__ passwords");
+    }
+  }
+
+  // ── Initial product catalogue ──
+  const seedIfMissing = (key, val) => {
+    if (!db.prepare("SELECT 1 FROM state WHERE key = ?").get(key)) {
+      writeState(key, val);
+    }
+  };
+
+  seedIfMissing("dk_products", [
+    { id:1, name:"Пельмени Домашние",   category:"Пельмени", description:"Классические с говядиной и бараниной", costPrice:280, sellPrice:450, stock:150, unit:"кг", status:"готов",           createdAt:"2024-01-20T10:00:00", updatedAt:"2024-06-01T12:00:00", deleted:false, techCard:["Подготовить тесто пельменное (замес 20 мин)","Подготовить фарш: говядина + баранина + лук + специи","Раскатать тесто, нарезать кружки","Лепка пельменей (ручная или автомат)","Заморозка при -18°C (2 часа)","Упаковка и маркировка"] },
+    { id:2, name:"Котлеты По-киевски",  category:"Котлеты",  description:"Куриные котлеты с маслом",            costPrice:320, sellPrice:520, stock:80,  unit:"шт", status:"в производстве",  createdAt:"2024-02-15T09:00:00", updatedAt:"2024-06-02T14:00:00", deleted:false, techCard:["Отбить куриное филе","Завернуть сливочное масло в филе","Панировка: мука → яйцо → сухари","Обжарка 3 мин с каждой стороны","Доготовка в духовке 15 мин при 180°C","Охлаждение и упаковка"] },
+    { id:3, name:"Вареники с картошкой",category:"Вареники", description:"С картофелем и жареным луком",         costPrice:200, sellPrice:350, stock:200, unit:"кг", status:"готов",           createdAt:"2024-03-01T11:00:00", updatedAt:"2024-06-03T10:00:00", deleted:false, techCard:["Приготовить тесто","Сварить и размять картофель","Обжарить лук, добавить в начинку","Раскатать тесто, вырезать кружки","Лепка вареников","Заморозка и упаковка"] },
+    { id:4, name:"Блинчики с мясом",    category:"Блинчики", description:"Тонкие блинчики с мясной начинкой",   costPrice:250, sellPrice:400, stock:60,  unit:"шт", status:"готов",           createdAt:"2024-03-15T08:00:00", updatedAt:"2024-06-04T09:00:00", deleted:false, techCard:["Приготовить блинное тесто","Выпечка блинов на сковороде","Приготовить мясную начинку","Завернуть начинку в блины","Обжарка блинчиков","Охлаждение и упаковка"] },
+    { id:5, name:"Манты Узбекские",     category:"Манты",    description:"Традиционные с бараниной",             costPrice:350, sellPrice:550, stock:40,  unit:"шт", status:"в производстве",  createdAt:"2024-04-01T10:00:00", updatedAt:"2024-06-05T11:00:00", deleted:false, techCard:["Подготовить тесто (тонкое раскатывание)","Нарезать баранину и лук кубиками","Добавить специи и курдючный жир","Лепка мантов (классическая форма)","Варка на пару 45 мин","Охлаждение и упаковка"] },
+  ]);
+
+  seedIfMissing("dk_raw_mats", [
+    { id:1,  name:"Говядина",        category:"Мясо",    unit:"кг", stock:500, minStock:100, costPerUnit:650,  updatedAt:"2024-06-01T10:00:00" },
+    { id:2,  name:"Телятина",        category:"Мясо",    unit:"кг", stock:400, minStock:80,  costPerUnit:550,  updatedAt:"2024-06-01T10:00:00" },
+    { id:3,  name:"Курица (филе)",   category:"Мясо",    unit:"кг", stock:300, minStock:60,  costPerUnit:380,  updatedAt:"2024-06-01T10:00:00" },
+    { id:4,  name:"Баранина",        category:"Мясо",    unit:"кг", stock:150, minStock:50,  costPerUnit:800,  updatedAt:"2024-06-01T10:00:00" },
+    { id:5,  name:"Тесто пельменное",category:"Тесто",   unit:"кг", stock:600, minStock:150, costPerUnit:120,  updatedAt:"2024-06-01T10:00:00" },
+    { id:6,  name:"Тесто блинное",   category:"Тесто",   unit:"кг", stock:200, minStock:50,  costPerUnit:90,   updatedAt:"2024-06-01T10:00:00" },
+    { id:7,  name:"Картофель",       category:"Овощи",   unit:"кг", stock:800, minStock:200, costPerUnit:45,   updatedAt:"2024-06-01T10:00:00" },
+    { id:8,  name:"Лук репчатый",    category:"Овощи",   unit:"кг", stock:300, minStock:80,  costPerUnit:35,   updatedAt:"2024-06-01T10:00:00" },
+    { id:9,  name:"Масло сливочное", category:"Масло",   unit:"кг", stock:100, minStock:30,  costPerUnit:900,  updatedAt:"2024-06-01T10:00:00" },
+    { id:10, name:"Специи (микс)",   category:"Специи",  unit:"кг", stock:50,  minStock:10,  costPerUnit:1200, updatedAt:"2024-06-01T10:00:00" },
+    { id:11, name:"Соль",            category:"Специи",  unit:"кг", stock:100, minStock:20,  costPerUnit:30,   updatedAt:"2024-06-01T10:00:00" },
+  ]);
+
+  seedIfMissing("dk_recipes", [
+    { id:1, productId:1, items:[{rawId:1,qty:0.3,unit:"кг"},{rawId:2,qty:0.3,unit:"кг"},{rawId:5,qty:0.4,unit:"кг"},{rawId:8,qty:0.05,unit:"кг"},{rawId:10,qty:0.01,unit:"кг"},{rawId:11,qty:0.02,unit:"кг"}], createdAt:"2024-01-20T10:00:00", updatedAt:"2024-01-20T10:00:00" },
+    { id:2, productId:2, items:[{rawId:3,qty:0.15,unit:"кг"},{rawId:9,qty:0.03,unit:"кг"},{rawId:10,qty:0.005,unit:"кг"},{rawId:11,qty:0.01,unit:"кг"}], createdAt:"2024-02-15T09:00:00", updatedAt:"2024-02-15T09:00:00" },
+    { id:3, productId:3, items:[{rawId:5,qty:0.4,unit:"кг"},{rawId:7,qty:0.5,unit:"кг"},{rawId:8,qty:0.08,unit:"кг"},{rawId:9,qty:0.02,unit:"кг"},{rawId:11,qty:0.01,unit:"кг"}], createdAt:"2024-03-01T11:00:00", updatedAt:"2024-03-01T11:00:00" },
+    { id:4, productId:4, items:[{rawId:1,qty:0.1,unit:"кг"},{rawId:2,qty:0.1,unit:"кг"},{rawId:6,qty:0.2,unit:"кг"},{rawId:8,qty:0.03,unit:"кг"},{rawId:10,qty:0.005,unit:"кг"}], createdAt:"2024-03-15T08:00:00", updatedAt:"2024-03-15T08:00:00" },
+    { id:5, productId:5, items:[{rawId:4,qty:0.25,unit:"кг"},{rawId:5,qty:0.35,unit:"кг"},{rawId:8,qty:0.1,unit:"кг"},{rawId:10,qty:0.015,unit:"кг"},{rawId:11,qty:0.02,unit:"кг"}], createdAt:"2024-04-01T10:00:00", updatedAt:"2024-04-01T10:00:00" },
+  ]);
+
+  seedIfMissing("dk_bonus_rules", [
+    { id:1, fromQty:0,   bonusPercent:0,  label:"Стандарт"      },
+    { id:2, fromQty:100, bonusPercent:5,  label:"Хорошо"        },
+    { id:3, fromQty:250, bonusPercent:10, label:"Отлично"       },
+    { id:4, fromQty:500, bonusPercent:15, label:"Топ результат" },
+    { id:5, fromQty:800, bonusPercent:20, label:"Рекорд"        },
+  ]);
+
+  seedIfMissing("dk_cameras", [
+    { id:1, name:"Цех — линия 1",           zone:"Цех",   type:"demo", url:"", enabled:true, description:"Производственная линия №1",    refreshSec:5, createdAt:"2024-01-01T00:00:00" },
+    { id:2, name:"Склад готовой продукции",  zone:"Склад", type:"demo", url:"", enabled:true, description:"Зона хранения",               refreshSec:5, createdAt:"2024-01-01T00:00:00" },
+    { id:3, name:"Вход в здание",            zone:"Вход",  type:"demo", url:"", enabled:true, description:"Главный вход",                refreshSec:5, createdAt:"2024-01-01T00:00:00" },
+    { id:4, name:"Офис менеджера",           zone:"Офис",  type:"demo", url:"", enabled:true, description:"Рабочее место менеджера",     refreshSec:5, createdAt:"2024-01-01T00:00:00" },
+  ]);
+
+  // All remaining keys: empty arrays (or objects) if missing
+  const emptyArrayKeys = [
+    "dk_tasks","dk_task_emps","dk_emp_hist","dk_prod_plans","dk_clients",
+    "dk_client_orders","dk_sales","dk_inv_move","dk_suppliers","dk_deliveries",
+    "dk_raw_movements","dk_notifications","dk_marks","dk_prod_outputs",
+    "dk_debts","dk_batches","dk_defects","dk_payroll","dk_trash",
+    "dk_email_codes","dk_logs",
+  ];
+  for (const key of emptyArrayKeys) seedIfMissing(key, []);
+  seedIfMissing("dk_base_salaries", {});
+
+  console.log("[bootstrap] Done");
+}
+
+bootstrapState();
+
 // ── HEALTH ──
 app.get("/api/ping", (_, res) => res.json({ ok: true, time: Date.now() }));
 
@@ -947,6 +1197,12 @@ app.get("*", (_req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Dikanish server running on port ${PORT}`);
+const HOST = process.env.HOST || '127.0.0.1';
+
+app.get('/api/health', (_req, res) => {
+  res.json({ ok: true, service: 'dikanish-api', time: Date.now() });
+});
+
+app.listen(PORT, HOST, () => {
+  console.log(`Dikanish API running at http://${HOST}:${PORT}`);
 });
